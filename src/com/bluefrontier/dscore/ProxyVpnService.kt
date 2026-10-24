@@ -5,6 +5,8 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.ProxyInfo
 import android.net.VpnService
 import android.os.Build
@@ -128,9 +130,61 @@ class ProxyVpnService : VpnService() {
         }
         tun = fd
         report("已建立：模式=$mode 代理=$host:$port")
+        bindProcessToVpnNetwork()
+    }
+
+    /**
+     * The system only sends a proxy change broadcast for the *default*
+     * network, so the WebView's proxy resolution still sees "direct" and the
+     * kernel never sees a connection (observed on device: kernel log empty,
+     * request times out). Binding this process to the VPN network makes the
+     * VPN the process default; Chromium then reads the proxy carried in the
+     * VPN LinkProperties.
+     *
+     * requestNetwork(TRANSPORT_VPN) needs a privileged permission, so poll
+     * getAllNetworks() until the freshly established VPN shows up.
+     */
+    private var bindRetries = 0
+
+    private fun bindProcessToVpnNetwork() {
+        bindRetries = 0
+        tryBindVpnNetwork()
+    }
+
+    private fun tryBindVpnNetwork() {
+        val cm = getSystemService(ConnectivityManager::class.java)
+        if (cm == null || tun == null) return
+        val vpn = cm.allNetworks.firstOrNull { n ->
+            val caps = cm.getNetworkCapabilities(n)
+            caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        }
+        if (vpn == null) {
+            if (bindRetries < 16) {
+                bindRetries++
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+                    { tryBindVpnNetwork() }, 500,
+                )
+            } else {
+                report("未能在 VPN 网络列表中找到本 app 的 VPN")
+            }
+            return
+        }
+        val bound = cm.bindProcessToNetwork(vpn)
+        report("已把本进程绑定到 VPN 网络：bind=$bound")
+    }
+
+    private fun releaseProcessBinding() {
+        bindRetries = 100 // stop any pending retry loop
+        val cm = getSystemService(ConnectivityManager::class.java)
+        try {
+            cm?.bindProcessToNetwork(null)
+        } catch (e: Exception) {
+            Log.w(TAG, "release network binding failed", e)
+        }
     }
 
     private fun shutdown() {
+        releaseProcessBinding()
         val fd = tun
         tun = null
         try {

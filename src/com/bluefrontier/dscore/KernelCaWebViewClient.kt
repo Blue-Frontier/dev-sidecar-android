@@ -22,13 +22,17 @@ class KernelCaWebViewClient : WebViewClient() {
     }
 
     override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
-        val issuer = error.certificate?.issuedBy?.toString().orEmpty()
-        if (issuer.contains(KERNEL_CA_ISSUER)) {
-            Log.i(TAG, "trust kernel-issued certificate for ${error.url}")
+        // DName.toString() prints a memory address, not the DN. Read the DN via
+        // getDName()/getCName() instead.
+        val dn = error.certificate?.issuedBy
+        val issuer = dn?.dName ?: ""
+        val issuerCn = dn?.cName ?: ""
+        if (issuer.contains(KERNEL_CA_ISSUER) || issuerCn == KERNEL_CA_ISSUER) {
+            Log.i(TAG, "trust kernel-issued certificate for ${error.url} (issuer=$issuer)")
             handler.proceed()
             return
         }
-        Log.w(TAG, "reject untrusted certificate issuer=$issuer url=${error.url}")
+        Log.w(TAG, "reject untrusted certificate issuer=$issuer cn=$issuerCn url=${error.url}")
         handler.cancel()
     }
 

@@ -22,9 +22,13 @@ Write-Host "[1/7] aapt2 link OK"
 
 # 2) kotlinc: compile all sources against android.jar
 $sources = (Get-ChildItem "$root\src" -Recurse -Filter *.kt).FullName
+# kotlinc prints deprecation warnings on stderr, which "Stop" would turn fatal.
+$eap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 & $env:KOTLINC -classpath $env:ANDROID_JAR $sources -d "$out\classes" 2>&1 |
     Where-Object { $_ -notmatch "^warning: unable to find kotlin-stdlib.*" } | Out-Host
-if ($LASTEXITCODE) { throw "kotlinc failed" }
+$ErrorActionPreference = $eap
+if ($LASTEXITCODE) { throw "kotlinc failed: exit $LASTEXITCODE" }
 Write-Host "[2/7] kotlinc OK"
 
 # 3) d8: dex our classes
@@ -59,7 +63,9 @@ Write-Host "[5/7] dex merged ($($dexFiles -join ', '))"
 # 6) zipalign + 7) sign (debug keystore generated on first run)
 & "$env:BUILD_TOOLS\zipalign.exe" -f 4 "$out\base.apk" "$out\aligned.apk"
 if ($LASTEXITCODE) { throw "zipalign failed" }
-$ks = Join-Path $out "debug.keystore"
+# Keep the debug keystore OUTSIDE build/ (build/ is wiped every run) so the key
+# stays stable across builds and `adb install -r` keeps working.
+$ks = Join-Path $root "debug.keystore"
 if (-not (Test-Path $ks)) {
     & "$env:JAVA_HOME\bin\keytool.exe" -genkeypair -v -keystore $ks -storepass android -keypass android `
         -alias dscore-debug -dname "CN=dscore-debug, OU=dev, O=blue-frontier" `
