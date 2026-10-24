@@ -1,0 +1,17 @@
+# 本机环境文档，不入库
+BUILDING.md
+
+# 构建产物
+smoke/out/
+*.apk
+*.keystore
+
+# 依赖暂存（将来走 Maven CLI 拉取）
+lib/
+
+# 编辑器/系统杂项
+.vscode/
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
