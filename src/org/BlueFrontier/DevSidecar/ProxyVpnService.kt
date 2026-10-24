@@ -1,4 +1,4 @@
-package com.bluefrontier.dscore
+package org.BlueFrontier.DevSidecar
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -32,8 +32,8 @@ class ProxyVpnService : VpnService() {
     companion object {
         private const val TAG = "ds-vpn"
 
-        const val ACTION_START = "com.bluefrontier.dscore.START"
-        const val ACTION_STOP = "com.bluefrontier.dscore.STOP"
+        const val ACTION_START = "org.BlueFrontier.DevSidecar.START"
+        const val ACTION_STOP = "org.BlueFrontier.DevSidecar.STOP"
         const val EXTRA_HOST = "host"
         const val EXTRA_PORT = "port"
         const val EXTRA_MODE = "mode"

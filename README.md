@@ -18,7 +18,7 @@
 
 ```
 AndroidManifest.xml        minSdk 29 / target 35，specialUse 前台服务
-src/com/bluefrontier/dscore/
+src/org/BlueFrontier/DevSidecar/
     MainActivity.kt            界面 + VPN 授权流程
     ProxyVpnService.kt         VpnService（proxy-only / route 两种模式）
     KernelCaWebViewClient.kt   只信任内核 CA 的 WebViewClient

@@ -1,4 +1,4 @@
-package com.bluefrontier.dscore.kernel
+package org.BlueFrontier.DsCoreGo
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -8,11 +8,14 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.widget.Toast
 import org.json.JSONObject
 import java.io.File
 
 class KernelService : Service() {
+
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -30,6 +33,29 @@ class KernelService : Service() {
         }
     }
 
+    /**
+     * MIUI suspends the whole process (threads go to S, zero CPU ticks) even
+     * for foreground services with "no restrictions" battery policy once it
+     * decides the app is idle - the kernel then stops accepting. A held
+     * partial wake lock plus the permanent fg notice is the strongest signal
+     * PowerKeeper respects without root.
+     */
+    private fun holdWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "dscore:kernel")
+        wakeLock?.setReferenceCounted(false)
+        wakeLock?.acquire()
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            wakeLock?.release()
+        } catch (_: Exception) {
+        }
+        wakeLock = null
+    }
+
     private fun startKernel() {
         if (running) {
             postNotice("Kernel already running")
@@ -37,6 +63,7 @@ class KernelService : Service() {
         }
         createChannel()
         startForeground(1, notice("Starting kernel…"))
+        holdWakeLock()
         val msg = try {
             val configPath = copyAsset("remote_config.json5")
             // CA + key are stored as TOP-LEVEL assets (aapt2 -A subdirectory
@@ -68,6 +95,7 @@ class KernelService : Service() {
         }
         handle = 0
         running = false
+        releaseWakeLock()
         postNotice("Kernel stopped")
         Toast.makeText(this, "Kernel stopped", Toast.LENGTH_SHORT).show()
     }
@@ -94,6 +122,11 @@ class KernelService : Service() {
         }
     }
 
+    override fun onDestroy() {
+        releaseWakeLock()
+        super.onDestroy()
+    }
+
     private fun copyAsset(name: String): String {
         val out = File(filesDir, name)
         assets.open(name).use { input -> out.outputStream().use { input.copyTo(it) } }
@@ -111,8 +144,8 @@ class KernelService : Service() {
     }
 
     companion object {
-        const val ACTION_START = "com.bluefrontier.dscore.kernel.START"
-        const val ACTION_STOP = "com.bluefrontier.dscore.kernel.STOP"
+        const val ACTION_START = "org.BlueFrontier.DsCoreGo.START"
+        const val ACTION_STOP = "org.BlueFrontier.DsCoreGo.STOP"
         private const val CH = "ds-kernel"
         private const val TAG = "ds-kernel"
         private const val LISTEN = "127.0.0.1:31181"

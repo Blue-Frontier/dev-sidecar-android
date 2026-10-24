@@ -1,4 +1,4 @@
-package com.bluefrontier.dscore
+package org.BlueFrontier.DevSidecar
 
 import android.app.Activity
 import android.os.Bundle

@@ -1,4 +1,4 @@
-package com.bluefrontier.dscore
+package org.BlueFrontier.DevSidecar
 
 import android.net.http.SslError
 import android.util.Log

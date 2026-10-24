@@ -1,4 +1,4 @@
-package com.bluefrontier.dscore
+package org.BlueFrontier.DevSidecar
 
 import android.net.Uri
 import android.util.Log

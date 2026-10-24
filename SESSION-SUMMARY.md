@@ -8,9 +8,9 @@
 
 ## 0. 一句话现状
 
-- **手机本地内核已跑通**：伴生 app `com.bluefrontier.dscore.kernel` 里用 gomobile 编出的
+- **手机本地内核已跑通**：伴生 app `org.BlueFrontier.DsCoreGo` 里用 gomobile 编出的
   `libgojni.so` 在手机上监听 `127.0.0.1:31181`，代理 baidu 返回 200（实测）。
-- **主 app `com.bluefrontier.dscore` 已指向本地内核**，等用户点"开启 VPN"+"打开"做最后的
+- **主 app `org.BlueFrontier.DevSidecar` 已指向本地内核**，等用户点"开启 VPN"+"打开"做最后的
   HTTPS(MITM) 端到端确认。
 - 架构成立：主 app 的 `VpnService` 只圈自己（`addAllowedApplication(packageName)`），
   伴生内核 app 是**独立包名**，它的上游流量不被 VPN 圈住 → **无自代理回环**。
@@ -26,8 +26,8 @@ GitHub 访问。当前处于 "0.1 跑通 + 内核嵌入" 阶段。
 
 | 组件 | 路径 | 说明 |
 |---|---|---|
-| 主 app（WebView + VpnService） | `D:\dev-sidecar-android\` | 包名 `com.bluefrontier.dscore`，产物 `build\dscore.apk` |
-| 伴生内核 app（跑 Go 内核） | `D:\dev-sidecar-android\kernel-app\` | 包名 `com.bluefrontier.dscore.kernel`，产物 `build\ds-kernel.apk` |
+| 主 app（WebView + VpnService） | `D:\dev-sidecar-android\` | 包名 `org.BlueFrontier.DevSidecar`，产物 `build\dscore.apk` |
+| 伴生内核 app（跑 Go 内核） | `D:\dev-sidecar-android\kernel-app\` | 包名 `org.BlueFrontier.DsCoreGo`，产物 `build\ds-kernel.apk` |
 | Go 内核 | `D:\dev-sidecar-core-go\` | 桌面 CLI（`cmd\ds-core`）+ 可嵌入库（`mobile\`）|
 
 手机：Xiaomi `25053RP5CC`（HyperOS / Android 16，**未 root**，`ro.build.type=user`）。
@@ -164,13 +164,13 @@ aapt2(-A assets) → kotlinc(**classpath 带 `;` 要用反引号转义外层引�
 # 手机内核状态
 $S='adb-0789B48009A40540-aL18tj._adb-tls-connect._tcp'
 adb -s $S shell 'ss -ltn | grep 31181'
-adb -s $S shell run-as com.bluefrontier.dscore.kernel tail -8 files/kernel.log
+adb -s $S shell run-as org.BlueFrontier.DsCoreGo tail -8 files/kernel.log
 # 重启伴生内核
-adb -s $S shell am force-stop com.bluefrontier.dscore.kernel
-adb -s $S shell am start -n com.bluefrontier.dscore.kernel/.MainActivity
+adb -s $S shell am force-stop org.BlueFrontier.DsCoreGo
+adb -s $S shell am start -n org.BlueFrontier.DsCoreGo/.MainActivity
 # 主 app 指向本地内核并测试
-adb -s $S shell am force-stop com.bluefrontier.dscore
-adb -s $S shell am start -n com.bluefrontier.dscore/.MainActivity --es host 127.0.0.1 --es port 31181
+adb -s $S shell am force-stop org.BlueFrontier.DevSidecar
+adb -s $S shell am start -n org.BlueFrontier.DevSidecar/.MainActivity --es host 127.0.0.1 --es port 31181
 # 截图
 adb -s $S shell screencap -p /sdcard/_s.png; adb -s $S pull /sdcard/_s.png D:\dev-sidecar-android\build\_s.png
 ```
@@ -182,7 +182,7 @@ adb -s $S shell screencap -p /sdcard/_s.png; adb -s $S pull /sdcard/_s.png D:\de
 - 两个 app 各自包名独立：主 app 更新用仓库根 keystore；伴生 app 也签 `D:\dev-sidecar-android\debug.keystore`。
   换 key 后要 `uninstall` 旧包。
 - 伴生内核进程被 `force-stop` 或手机省电杀掉后，要重新 `am start` 伴生 activity 才重启内核。
-- `pm clear com.bluefrontier.dscore.kernel` 会删掉 `files/ca/`（下次启动会从 asset 重拷）。
+- `pm clear org.BlueFrontier.DsCoreGo` 会删掉 `files/ca/`（下次启动会从 asset 重拷）。
 - PowerShell 传带 `;` 的参数给 kotlinc 会拆参 → 用 `` "`"$path`" `` 外层转义引号。
 - 内核日志时间戳是 UTC（`Z`），比本地慢 8 小时。
 - 中间脚本/截图在 `D:\dev-sidecar-android\build\`（`_scan_sessions.py`、`_tail*.md`、

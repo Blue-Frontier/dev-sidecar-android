@@ -1,4 +1,4 @@
-package com.bluefrontier.dscore.kernel
+package org.BlueFrontier.DsCoreGo
 
 import android.app.Activity
 import android.content.Intent
