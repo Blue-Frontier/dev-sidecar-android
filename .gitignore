@@ -2,6 +2,7 @@
 BUILDING.md
 
 # 构建产物
+build/
 smoke/out/
 *.apk
 *.keystore
