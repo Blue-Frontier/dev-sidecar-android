@@ -63,7 +63,7 @@ jobs:
             --title "$TITLE" \
             --draft \
             --generate-notes \
-            --notes "DS NEXT $VERSION（arm64）。安装前先卸载旧版本应用，签名不同。"
+            --notes "DS NEXT $VERSION（arm64 + x86_64）。安装前先卸载旧版本应用，签名不同。"
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,name,tagName
 
       - name: Mark a fork build as prerelease
@@ -74,3 +74,4 @@ jobs:
         run: |
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,name
+

@@ -126,8 +126,9 @@ dist/                         归档的签名 APK
 ## 已知限制
 
 - `shouldInterceptRequest` 不暴露请求体，因此非 GET/HEAD 请求返回 501；页面里的 POST/XHR 会失败。
-- minSdk 29（内核依赖的 TLS 行为与 29 对齐），arm64 only。
+- minSdk 29（内核依赖的 TLS 行为与 29 对齐）。APK 内含 arm64-v8a 与 x86_64 两个内核，体积约 15 MB；模拟器与 Chromebook 用得到 x86_64，纯手机场景可以只编 `-Target android/arm64` 省一半体积。
 - 桌面端用于代理其它应用的场景在手机端未实现：本应用只转发自己的 WebView。
+
 
 
 

@@ -1,5 +1,6 @@
-# Syncs the gomobile AAR into this app: classes.jar (dex + kotlinc classpath),
-# libgojni.so (native kernel). Run after <kernel>\build-kernel-aar.ps1.
+# Syncs the gomobile AAR into this app: classes.jar (dex + kotlinc classpath)
+# and one libgojni.so per ABI the AAR carries. Run after
+# <kernel>\build-kernel-aar.ps1 (which decides the ABIs via -Target).
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 
@@ -27,9 +28,17 @@ $tmp = Join-Path $env:TEMP ('aar-' + [guid]::NewGuid())
 [System.IO.Compression.ZipFile]::ExtractToDirectory($aar, $tmp)
 try {
     Copy-Item (Join-Path $tmp 'classes.jar') (Join-Path $libs 'classes.jar') -Force
-    $so = Get-ChildItem $tmp -Recurse -Filter libgojni.so | Select-Object -First 1
-    if (-not $so) { throw 'libgojni.so missing from aar' }
-    Copy-Item $so.FullName (Join-Path $libs 'libgojni.so') -Force
+
+    # jni/<abi>/libgojni.so -- keep the ABI directory name, it is what the
+    # APK's lib/<abi>/ layout has to match.
+    $sos = Get-ChildItem $tmp -Recurse -Filter libgojni.so
+    if (-not $sos) { throw 'libgojni.so missing from aar' }
+    foreach ($so in $sos) {
+        $abi = Split-Path $so.DirectoryName -Leaf
+        $dst = Join-Path $libs "lib\$abi"
+        New-Item -ItemType Directory -Path $dst -Force | Out-Null
+        Copy-Item $so.FullName (Join-Path $dst 'libgojni.so') -Force
+    }
 } finally {
     Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 }
@@ -38,10 +47,19 @@ try {
 [System.IO.Compression.ZipFile]::ExtractToDirectory((Join-Path $libs 'classes.jar'), (Join-Path $libs 'classes'))
 
 # build.ps1 refuses to package a stale kernel; this records what was synced.
+$synced = Get-ChildItem (Join-Path $libs 'lib') -Directory | ForEach-Object {
+    $so = Join-Path $_.FullName 'libgojni.so'
+    [pscustomobject]@{
+        abi      = $_.Name
+        bytes    = (Get-Item $so).Length
+        soSha256 = (Get-FileHash $so -Algorithm SHA256).Hash
+    }
+}
 [pscustomobject]@{
-    at       = (Get-Date).ToString('o')
-    soSha256 = (Get-FileHash (Join-Path $libs 'libgojni.so') -Algorithm SHA256).Hash
-} | ConvertTo-Json | Set-Content (Join-Path $libs '.sync-stamp') -Encoding UTF8
+    at  = (Get-Date).ToString('o')
+    abi = @($synced)
+} | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $libs '.sync-stamp') -Encoding UTF8
 
-Write-Host ("kernel synced: {0:N0} bytes classes.jar, {1:N0} bytes libgojni.so" -f `
-    (Get-Item (Join-Path $libs 'classes.jar')).Length, (Get-Item (Join-Path $libs 'libgojni.so')).Length)
+Write-Host ("kernel synced: {0:N0} bytes classes.jar; {1}" -f `
+    (Get-Item (Join-Path $libs 'classes.jar')).Length,
+    (($synced | ForEach-Object { "$($_.abi) $([math]::Round($_.bytes / 1MB, 1))MB" }) -join ', '))

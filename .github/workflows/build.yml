@@ -182,7 +182,7 @@ jobs:
           } else {
               $name = [regex]::Match((Get-Content $manifest -Raw), 'android:versionName="([^"]*)"').Groups[1].Value
           }
-          $artifact = "DS-NEXT-$name-arm64"
+          $artifact = "DS-NEXT-$name"
           "name=$name" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
           "artifact=$artifact" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
           Write-Host "versionName=$name artifact=$artifact"
@@ -191,7 +191,9 @@ jobs:
         working-directory: kernel
         shell: pwsh
         run: |
-          ./build-kernel-aar.ps1
+          # Phones plus x86_64 (emulators, Chromebooks). gomobile takes one
+          # architecture per run; the script merges them into one AAR.
+          ./build-kernel-aar.ps1 -Target android/arm64,android/amd64
 
       - name: Sync the kernel into the app
         shell: pwsh
@@ -219,5 +221,6 @@ jobs:
           path: release/*
           if-no-files-found: error
           retention-days: 30
+
 
 

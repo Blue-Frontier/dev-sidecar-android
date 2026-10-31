@@ -28,14 +28,17 @@ $stdLib = if ($env:KOTLIN_STDLIB) {
 $stdLib = [System.IO.Path]::GetFullPath($stdLib)
 if (-not (Test-Path $stdLib)) { throw "kotlin-stdlib.jar not found at $stdLib" }
 
-# The Go kernel ships as a gomobile AAR (classes.jar + libgojni.so), synced by
-# sync-kernel.ps1. It lives in the same APK as the browser now.
+# The Go kernel ships as a gomobile AAR (classes.jar + one libgojni.so per ABI),
+# synced by sync-kernel.ps1. It lives in the same APK as the browser now.
 $gomobileJar = Join-Path $root "libs\classes.jar"
-$goSo = Join-Path $root "libs\libgojni.so"
 $gomobileClasses = Join-Path $root "libs\classes"
-foreach ($f in @($gomobileJar, $goSo, $gomobileClasses)) {
+$abiLibs = Get-ChildItem (Join-Path $root 'libs\lib') -Directory -ErrorAction SilentlyContinue |
+    ForEach-Object { [pscustomobject]@{ Abi = $_.Name; So = (Join-Path $_.FullName 'libgojni.so') } } |
+    Where-Object { Test-Path $_.So }
+foreach ($f in @($gomobileJar, $gomobileClasses)) {
     if (-not (Test-Path $f)) { throw "missing prerequisite: $f (run sync-kernel.ps1 after building kernel.aar)" }
 }
+if (-not $abiLibs) { throw "no libgojni.so under libs\lib (run sync-kernel.ps1 after building kernel.aar)" }
 
 # Refuse to package a stale kernel. libgojni.so carries no usable mtime, so the
 # sync stamp is compared against the newest Go source instead; shipping a
@@ -118,16 +121,21 @@ foreach ($src in @("$out\dex\gomobile", "$out\dex\stdlib")) {
         $next++
     }
 }
-New-Item -ItemType Directory -Path "$out\stage\lib\arm64-v8a" | Out-Null
-Copy-Item $goSo "$out\stage\lib\arm64-v8a\libgojni.so"
+New-Item -ItemType Directory -Path "$out\stage" | Out-Null
+foreach ($entry in $abiLibs) {
+    $d = Join-Path "$out\stage" "lib\$($entry.Abi)"
+    New-Item -ItemType Directory -Path $d -Force | Out-Null
+    Copy-Item $entry.So (Join-Path $d 'libgojni.so')
+}
 $dexFiles = (Get-ChildItem "$out\finaldex" -Filter *.dex | Sort-Object Name | % Name)
 # jar's -C takes exactly ONE file; chain one -C per dex
 $jarArgs = @("uf", "$out\base.apk")
 foreach ($n in $dexFiles) { $jarArgs += @("-C", "$out\finaldex", $n) }
-$jarArgs += @("-C", "$out\stage", "lib/arm64-v8a/libgojni.so")
+foreach ($entry in $abiLibs) { $jarArgs += @("-C", "$out\stage", "lib/$($entry.Abi)/libgojni.so") }
 & "$env:JAVA_HOME\bin\jar.exe" @jarArgs
 if ($LASTEXITCODE) { throw "jar uf failed" }
-Write-Host "[5/7] dex + .so merged ($($dexFiles -join ', '))"
+$abis = ($abiLibs | ForEach-Object { $_.Abi }) -join ', '
+Write-Host "[5/7] dex + .so merged ($($dexFiles -join ', '); abi: $abis)"
 
 # 6) zipalign + 7) sign (debug keystore generated on first run)
 & "$env:BUILD_TOOLS\zipalign.exe" -f 4 "$out\base.apk" "$out\aligned.apk"
