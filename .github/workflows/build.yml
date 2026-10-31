@@ -59,17 +59,53 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
+      # The runner image already ships the Android SDK; android-actions/setup-android
+      # fails here because it still installs the retired "tools" package. Drive
+      # sdkmanager directly and fall back to the newest package when the pinned
+      # version is gone from the repository.
       - name: Install build-tools, platform and NDK
         shell: pwsh
         run: |
-          sdkmanager --install `
-            "platforms;android-$env:ANDROID_PLATFORM" `
-            "build-tools;$env:BUILD_TOOLS_VERSION" `
-            "ndk;$env:NDK_VERSION"
-          if ($LASTEXITCODE) { throw "sdkmanager failed" }
+          $sdk = $env:ANDROID_HOME
+          if (-not $sdk) { $sdk = 'C:\Android\android-sdk' }
+          if (-not (Test-Path $sdk)) { throw "Android SDK not found at $sdk" }
+
+          $sm = Get-ChildItem (Join-Path $sdk 'cmdline-tools') -Recurse -Filter sdkmanager.bat -ErrorAction SilentlyContinue |
+                Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $sm) { throw "sdkmanager.bat not found under $sdk\cmdline-tools" }
+          Write-Host "sdkmanager: $($sm.FullName)"
+
+          ("ANDROID_HOME=$sdk", "ANDROID_SDK_ROOT=$sdk") |
+            ForEach-Object { $_ | Out-File $env:GITHUB_ENV -Append -Encoding utf8 }
+
+          ("y`n" * 40) | & $sm.FullName --sdk_root=$sdk --licenses 2>&1 | Out-Null
+
+          function Install-Package {
+            param([string]$Prefix, [string]$Want)
+            & $sm.FullName --sdk_root=$sdk --install "$Prefix;$Want" 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) { return $Want }
+
+            $pattern = "^\s+$([regex]::Escape($Prefix));(\d+(?:\.\d+)*)"
+            $best = & $sm.FullName --sdk_root=$sdk --list 2>&1 |
+                Select-String -Pattern $pattern |
+                ForEach-Object { $_.Matches[0].Groups[1].Value } |
+                Sort-Object { [version]$_ } -Descending |
+                Select-Object -First 1
+            if (-not $best) { throw "no $Prefix package available in the SDK repository" }
+            Write-Host "$Prefix;$Want is unavailable, installing $Prefix;$best instead"
+            & $sm.FullName --sdk_root=$sdk --install "$Prefix;$best" 2>&1 | Out-Null
+            if ($LASTEXITCODE) { throw "installing $Prefix;$best failed" }
+            return $best
+          }
+
+          $bt = Install-Package 'build-tools' $env:BUILD_TOOLS_VERSION
+          $ndk = Install-Package 'ndk' $env:NDK_VERSION
+          & $sm.FullName --sdk_root=$sdk --install "platforms;android-$env:ANDROID_PLATFORM" 2>&1 | Out-Null
+          if ($LASTEXITCODE) { throw "installing platform $env:ANDROID_PLATFORM failed" }
+
+          "BUILD_TOOLS=$(Join-Path $sdk "build-tools\$bt")" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "ANDROID_NDK_HOME=$(Join-Path $sdk "ndk\$ndk")" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "build-tools=$bt ndk=$ndk platform=$env:ANDROID_PLATFORM"
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -109,16 +145,16 @@ jobs:
         shell: pwsh
         run: |
           $sdk = $env:ANDROID_HOME
-          $bt = Join-Path $sdk "build-tools\$env:BUILD_TOOLS_VERSION"
+          # BUILD_TOOLS and ANDROID_NDK_HOME were resolved by the install step
+          # (the pinned version may have been substituted), so reuse them.
+          $bt = $env:BUILD_TOOLS
           $kotlin = Join-Path $env:GITHUB_WORKSPACE '.toolchain\kotlinc'
           $kotlinc = if (Test-Path "$kotlin\bin\kotlinc.bat") { "$kotlin\bin\kotlinc.bat" } else { "$kotlin\bin\kotlinc" }
 
           "ANDROID_JAR=$(Join-Path $sdk "platforms\android-$env:ANDROID_PLATFORM\android.jar")" |
             Out-File $env:GITHUB_ENV -Append -Encoding utf8
-          "BUILD_TOOLS=$bt" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
           "KOTLINC=$kotlinc" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
           "KOTLIN_STDLIB=$kotlin\lib\kotlin-stdlib.jar" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
-          "ANDROID_NDK_HOME=$(Join-Path $sdk "ndk\$env:NDK_VERSION")" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
 
           # aapt2/d8/zipalign/apksigner live in build-tools; jar/keytool in the JDK.
           "$bt" | Out-File $env:GITHUB_PATH -Append -Encoding utf8
