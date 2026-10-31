@@ -22,9 +22,6 @@ on:
       version:
         description: Version name that ended up in the APK
         value: ${{ jobs.build.outputs.version }}
-      artifact:
-        description: Artifact name holding the signed APK
-        value: ${{ jobs.build.outputs.artifact }}
 
 permissions:
   contents: read
@@ -34,6 +31,17 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
 
+    # One job per architecture: the kernel is a 19 MB native library, so a fat
+    # APK would be twice the size for no benefit. Each job produces its own APK.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64
+            target: android/arm64
+          - abi: x86_64
+            target: android/amd64
+
     # Pinned to the toolchain the app is developed against. The build is a shell
     # chain (aapt2 -> kotlinc -> d8 -> zipalign -> apksigner) rather than Gradle,
     # so these versions are what the scripts expect to find.
@@ -42,10 +50,10 @@ jobs:
       BUILD_TOOLS_VERSION: '37.0.0'
       NDK_VERSION: '29.0.14206865'
       ANDROID_PLATFORM: '35'
+      MATRIX_ABI: ${{ matrix.abi }}
 
     outputs:
       version: ${{ steps.version.outputs.name }}
-      artifact: ${{ steps.version.outputs.artifact }}
 
     steps:
       - name: Checkout (with the kernel submodule)
@@ -182,7 +190,7 @@ jobs:
           } else {
               $name = [regex]::Match((Get-Content $manifest -Raw), 'android:versionName="([^"]*)"').Groups[1].Value
           }
-          $artifact = "DS-NEXT-$name"
+          $artifact = "DS-NEXT-$name-$env:MATRIX_ABI"
           "name=$name" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
           "artifact=$artifact" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
           Write-Host "versionName=$name artifact=$artifact"
@@ -191,9 +199,7 @@ jobs:
         working-directory: kernel
         shell: pwsh
         run: |
-          # Phones plus x86_64 (emulators, Chromebooks). gomobile takes one
-          # architecture per run; the script merges them into one AAR.
-          ./build-kernel-aar.ps1 -Target android/arm64,android/amd64
+          ./build-kernel-aar.ps1 -Target ${{ matrix.target }}
 
       - name: Sync the kernel into the app
         shell: pwsh
@@ -211,7 +217,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path release | Out-Null
           Copy-Item build\dscore.apk "release\${{ steps.version.outputs.artifact }}.apk"
           $hash = (Get-FileHash "release\${{ steps.version.outputs.artifact }}.apk" -Algorithm SHA256).Hash
-          "$hash  ${{ steps.version.outputs.artifact }}.apk" | Set-Content release\SHA256SUMS.txt -Encoding utf8
+          "$hash  ${{ steps.version.outputs.artifact }}.apk" | Set-Content "release\SHA256SUMS-$env:MATRIX_ABI.txt" -Encoding utf8
           Get-ChildItem release | Format-Table Name, Length
 
       - name: Upload the APK
@@ -221,6 +227,8 @@ jobs:
           path: release/*
           if-no-files-found: error
           retention-days: 30
+
+
 
 
 

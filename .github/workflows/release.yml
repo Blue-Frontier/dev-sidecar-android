@@ -25,10 +25,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download the APK
+      - name: Download both APKs
         uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.build.outputs.artifact }}
+          # One artifact per architecture, produced by the matrix build.
+          pattern: DS-NEXT-${{ needs.build.outputs.version }}-*
+          merge-multiple: true
           path: release
 
       - name: Inspect the release files
@@ -63,7 +65,7 @@ jobs:
             --title "$TITLE" \
             --draft \
             --generate-notes \
-            --notes "DS NEXT $VERSION（arm64 + x86_64）。安装前先卸载旧版本应用，签名不同。"
+            --notes "DS NEXT $VERSION。按设备架构各一个包：arm64 对应手机，x86_64 对应模拟器/Chromebook；装错了系统会拒绝安装。安装前先卸载旧版本应用，签名不同。"
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,name,tagName
 
       - name: Mark a fork build as prerelease
@@ -74,4 +76,5 @@ jobs:
         run: |
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,name
+
 
