@@ -137,21 +137,40 @@ if ($LASTEXITCODE) { throw "jar uf failed" }
 $abis = ($abiLibs | ForEach-Object { $_.Abi }) -join ', '
 Write-Host "[5/7] dex + .so merged ($($dexFiles -join ', '); abi: $abis)"
 
-# 6) zipalign + 7) sign (debug keystore generated on first run)
+# 6) zipalign + 7) sign
 & "$env:BUILD_TOOLS\zipalign.exe" -f 4 "$out\base.apk" "$out\aligned.apk"
 if ($LASTEXITCODE) { throw "zipalign failed" }
-# Keep the debug keystore OUTSIDE build/ (build/ is wiped every run) so the key
-# stays stable across builds and `adb install -r` keeps working.
-$ks = Join-Path $root "debug.keystore"
-if (-not (Test-Path $ks)) {
-    & "$env:JAVA_HOME\bin\keytool.exe" -genkeypair -v -keystore $ks -storepass android -keypass android `
-        -alias dscore-debug -dname "CN=dscore-debug, OU=dev, O=blue-frontier" `
+
+# Signing key. A CI runner has no keystore of its own, and generating one per
+# run produces an APK that cannot be installed over (or upgraded from) the
+# previous release: the signatures differ. So the key comes from the environment
+# when it is provided, otherwise a local debug.keystore (kept OUTSIDE build/, so
+# it survives the wipe and `adb install -r` keeps working) is generated once.
+$ksKeep = $false
+$ksPass = 'android'
+$keyPass = 'android'
+$alias = 'dscore-debug'
+$ks = Join-Path $root 'debug.keystore'
+if ($env:DS_KEYSTORE_B64) {
+    $ks = Join-Path $env:TEMP "ds-release-$([guid]::NewGuid()).keystore"
+    [System.IO.File]::WriteAllBytes($ks, [Convert]::FromBase64String($env:DS_KEYSTORE_B64))
+    if ($env:DS_KEYSTORE_PASS) { $ksPass = $env:DS_KEYSTORE_PASS }
+    $keyPass = if ($env:DS_KEY_PASS) { $env:DS_KEY_PASS } else { $ksPass }
+    if ($env:DS_KEY_ALIAS) { $alias = $env:DS_KEY_ALIAS }
+    Write-Host "signing with the keystore from DS_KEYSTORE_B64 (alias $alias)"
+} elseif (-not (Test-Path $ks)) {
+    & "$env:JAVA_HOME\bin\keytool.exe" -genkeypair -v -keystore $ks -storepass $ksPass -keypass $keyPass `
+        -alias $alias -dname "CN=dscore-debug, OU=dev, O=blue-frontier" `
         -keyalg RSA -keysize 2048 -validity 10000 | Out-Null
+    Write-Host "generated a fresh debug keystore: releases signed with it cannot upgrade one another"
 }
-& "$env:BUILD_TOOLS\apksigner.bat" sign --ks $ks --ks-pass pass:android --key-pass pass:android `
+& "$env:BUILD_TOOLS\apksigner.bat" sign --ks $ks --ks-key-alias $alias `
+    "--ks-pass=pass:$ksPass" "--key-pass=pass:$keyPass" `
     --out "$out\dscore.apk" "$out\aligned.apk"
 if ($LASTEXITCODE) { throw "apksigner sign failed" }
 & "$env:BUILD_TOOLS\apksigner.bat" verify "$out\dscore.apk"
+# A temporary keystore must not outlive the build.
+if ($env:DS_KEYSTORE_B64 -and (Test-Path $ks)) { Remove-Item $ks -Force -ErrorAction SilentlyContinue }
 Write-Host "[6/7] zipalign OK"
 Write-Host "[7/7] signed -> $out\dscore.apk"
 

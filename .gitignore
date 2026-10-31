@@ -6,6 +6,8 @@ build/
 smoke/out/
 *.apk
 *.keystore
+# 例外：CI 要用同一把密钥签名，否则每次构建的 APK 互不兼容
+!debug.keystore
 
 # 依赖暂存（将来走 Maven CLI 拉取）
 lib/
@@ -23,4 +25,5 @@ _probe/
 
 # 内核 AAR 的派生产物，由 kernel/ 源码构建并 sync 出来
 libs/
+
 
