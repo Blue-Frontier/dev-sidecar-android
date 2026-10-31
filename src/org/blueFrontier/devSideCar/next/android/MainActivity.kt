@@ -138,9 +138,7 @@ class MainActivity : Activity() {
         // Hidden entry for the overwall (增强) mode: the mode row omits it, but
         // `am start ... --es mode ow` still applies it. MainActivity is the only
         // exported activity, so the switch lives here.
-        intent.getStringExtra("mode")?.takeIf { it.isNotBlank() }?.let { requested ->
-            KernelRuntime.setMode(this, requested)
-        }
+        applyIntentExtras(intent)
 
         // `am start --es url X` drives a load from adb (automation, QR handoff);
         // otherwise resume the last page, and on a fresh install open the home page.
@@ -148,6 +146,34 @@ class MainActivity : Activity() {
         val initial = startUrl ?: BrowserPrefs.home(this)
         urlField.setText(initial)
         web.loadUrl(initial)
+    }
+
+    /**
+     * Applies the adb extras. Only onCreate and onNewIntent call this: replaying
+     * it from onResume would re-assert a stale `mode` every time the user comes
+     * back from settings, overriding whatever they just picked there.
+     *
+     * `am start` on a running instance may be swallowed as a task bring-to-front
+     * (no onCreate, no onNewIntent), so switching modes from adb needs `-S`.
+     */
+    private fun applyIntentExtras(from: android.content.Intent) {
+        from.getStringExtra("mode")?.takeIf { it.isNotBlank() }?.let { requested ->
+            val ok = KernelRuntime.setMode(this, requested)
+            android.util.Log.i(
+                "ds-mode",
+                "extra=$requested ok=$ok current=${KernelRuntime.currentMode(this)}",
+            )
+        }
+        from.getStringExtra("url")?.takeIf { it.isNotBlank() }?.let {
+            urlField.setText(it)
+            web.loadUrl(it)
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        applyIntentExtras(intent)
     }
 
     override fun onResume() {
@@ -210,4 +236,8 @@ class MainActivity : Activity() {
         const val DEFAULT_HOST = "127.0.0.1"
     }
 }
+
+
+
+
 

@@ -86,10 +86,17 @@ dist/                         归档的签名 APK
 
 - **默认**：按规则拦截与改写。
 - **安全**：关闭规则匹配，用来判断问题是否由规则引起。
-- **增强**（`ow`，启用中继插件）：界面不提供入口，属于保留能力。可用 `adb shell am start -n org.blueFrontier.devSideCar.next.android/.MainActivity --es mode ow` 切换，设置页会如实显示"当前模式：增强"。
+- **增强**（`ow`，启用中继插件）：界面不提供入口，属于保留能力。切换要用 `-S` 强制重启，否则 `am start` 会退化成"把任务拉到前台"，活动不会重建、extra 不生效：
+
+  ```powershell
+  adb shell am start -S -n org.blueFrontier.devSideCar.next.android/.MainActivity --es mode ow
+  ```
+
+  设置页会如实显示"当前模式：增强"。日志里有一行 `ds-mode: extra=ow ok=true current=ow` 可核对。
 
 ## 已知限制
 
 - `shouldInterceptRequest` 不暴露请求体，因此非 GET/HEAD 请求返回 501；页面里的 POST/XHR 会失败。
 - minSdk 29（内核依赖的 TLS 行为与 29 对齐），arm64 only。
 - 桌面端用于代理其它应用的场景在手机端未实现：本应用只转发自己的 WebView。
+
