@@ -1,5 +1,11 @@
 # dev-sidecar 安卓版 · 会话迁移总结
 
+> ⚠️ 本文写于 2026-10-25 凌晨，部分内容已被后续进展覆盖。最新状态见 **`PROGRESS.md`**。
+> ⚠️ **端口已变更（2026-10-28）**：本项目一律用 **31191**，不得再绑定 31181（桌面 dev-sidecar 占用）。
+> ⚠️ **已合并为单 app（2026-10-29）**：内核已并入 `org.BlueFrontier.DevSidecar`，
+> 伴生 app `org.BlueFrontier.DsCoreGo` 与 `kernel-app/` 均已删除。本文里所有
+> "启动/停止伴生 app" 的步骤已失效，构建与运行方式见 `PROGRESS.md` §0.7。
+
 > 写于 2026-10-25 凌晨（本地时区 Asia/Shanghai）。本会话从"测试 ds 安卓版"开始，
 > 一路修了 app 端 bug，最终把 Go 内核通过 gomobile 打进伴生 app、在手机上本地跑通。
 > 新会话接手前请读完本文。

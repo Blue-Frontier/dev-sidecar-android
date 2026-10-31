@@ -11,21 +11,63 @@ $root = $PSScriptRoot
 $stdLib = "C:\Users\Nobody\android-toolchain\kotlin\lib\kotlin-stdlib.jar"
 if (-not (Test-Path $stdLib)) { throw "kotlin-stdlib.jar not found at $stdLib" }
 
+# The Go kernel ships as a gomobile AAR (classes.jar + libgojni.so), synced by
+# sync-kernel.ps1. It lives in the same APK as the browser now.
+$gomobileJar = Join-Path $root "libs\classes.jar"
+$goSo = Join-Path $root "libs\libgojni.so"
+$gomobileClasses = Join-Path $root "libs\classes"
+foreach ($f in @($gomobileJar, $goSo, $gomobileClasses)) {
+    if (-not (Test-Path $f)) { throw "missing prerequisite: $f (run sync-kernel.ps1 after building kernel.aar)" }
+}
+
+# Refuse to package a stale kernel. libgojni.so carries no usable mtime, so the
+# sync stamp is compared against the newest Go source instead; shipping a
+# pre-fix binary is exactly the kind of drift this guards against.
+# Same resolution order as sync-kernel.ps1: submodule, DS_KERNEL_DIR, legacy path.
+$goRepo = if (Test-Path (Join-Path $root 'kernel\go.mod')) {
+    Join-Path $root 'kernel'
+} elseif ($env:DS_KERNEL_DIR) {
+    $env:DS_KERNEL_DIR
+} else {
+    'D:\dev-sidecar-core-go'
+}
+$stampFile = Join-Path $root 'libs\.sync-stamp'
+if (Test-Path $goRepo) {
+    $newestGo = Get-ChildItem $goRepo -Recurse -Include *.go -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notlike '*_test.go' -and $_.FullName -notmatch '\\\.smoke\\' } |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($newestGo) {
+        if (-not (Test-Path $stampFile)) {
+            throw "libs/ has no sync stamp: run sync-kernel.ps1 (otherwise an old libgojni.so gets packaged)"
+        }
+        $syncedAt = [datetime](Get-Content $stampFile -Raw | ConvertFrom-Json).at
+        if ($syncedAt -lt $newestGo.LastWriteTime) {
+            throw ("libs/libgojni.so is older than {0} ({1}): run build-kernel-aar.ps1 then sync-kernel.ps1" -f `
+                $newestGo.Name, $newestGo.LastWriteTime)
+        }
+    }
+}
+
 $out = Join-Path $root "build"
 if (Test-Path $out) { Remove-Item $out -Recurse -Force }
 New-Item -ItemType Directory -Path $out | Out-Null
 
-# 1) aapt2: link the manifest (the app is resource-free: no res/ at all)
-& "$env:BUILD_TOOLS\aapt2.exe" link -I $env:ANDROID_JAR --manifest "$root\AndroidManifest.xml" -o "$out\base.apk"
+# 1) aapt2: compile res (launcher icon), then link manifest + assets + those
+#    compiled resources (aapt2 has no -S; compiled flat files are inputs).
+& "$env:BUILD_TOOLS\aapt2.exe" compile --dir "$root\res" -o "$out\res.zip"
+if ($LASTEXITCODE) { throw "aapt2 compile failed" }
+& "$env:BUILD_TOOLS\aapt2.exe" link -I $env:ANDROID_JAR --manifest "$root\AndroidManifest.xml" `
+    -A "$root\assets" -o "$out\base.apk" "$out\res.zip"
 if ($LASTEXITCODE) { throw "aapt2 link failed" }
 Write-Host "[1/7] aapt2 link OK"
 
-# 2) kotlinc: compile all sources against android.jar
+# 2) kotlinc: compile all sources against android.jar + gomobile classes.
+#    Escaped outer quotes keep the ';' classpath separator intact.
 $sources = (Get-ChildItem "$root\src" -Recurse -Filter *.kt).FullName
 # kotlinc prints deprecation warnings on stderr, which "Stop" would turn fatal.
 $eap = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
-& $env:KOTLINC -classpath $env:ANDROID_JAR $sources -d "$out\classes" 2>&1 |
+& $env:KOTLINC -classpath "`"$env:ANDROID_JAR;$gomobileClasses`"" $sources -d "$out\classes" 2>&1 |
     Where-Object { $_ -notmatch "^warning: unable to find kotlin-stdlib.*" } | Out-Host
 $ErrorActionPreference = $eap
 if ($LASTEXITCODE) { throw "kotlinc failed: exit $LASTEXITCODE" }
@@ -38,27 +80,37 @@ New-Item -ItemType Directory -Path "$out\dex\app" | Out-Null
 if ($LASTEXITCODE) { throw "d8 (app) failed" }
 Write-Host "[3/7] d8 app OK"
 
-# 4) d8: dex kotlin-stdlib (bundles the runtime; no third-party jars involved)
+# 4) d8: dex kotlin-stdlib and the gomobile bridge
 New-Item -ItemType Directory -Path "$out\dex\stdlib" | Out-Null
 & "$env:BUILD_TOOLS\d8.bat" --lib $env:ANDROID_JAR --min-api 29 --output "$out\dex\stdlib" $stdLib
 if ($LASTEXITCODE) { throw "d8 (stdlib) failed" }
 Write-Host "[4/7] d8 stdlib OK"
 
-# 5) merge dex: app = classes.dex, stdlib follows as classes2.dex...
+New-Item -ItemType Directory -Path "$out\dex\gomobile" | Out-Null
+& "$env:BUILD_TOOLS\d8.bat" --lib $env:ANDROID_JAR --min-api 29 --output "$out\dex\gomobile" $gomobileJar
+if ($LASTEXITCODE) { throw "d8 (gomobile) failed" }
+Write-Host "[4b/7] d8 gomobile OK"
+
+# 5) merge dex + native kernel into the apk
 New-Item -ItemType Directory -Path "$out\finaldex" | Out-Null
 Copy-Item "$out\dex\app\classes.dex" "$out\finaldex\classes.dex"
 $next = 2
-foreach ($f in (Get-ChildItem "$out\dex\stdlib" -Filter *.dex | Sort-Object Name)) {
-    Copy-Item $f.FullName "$out\finaldex\classes$next.dex"
-    $next++
+foreach ($src in @("$out\dex\gomobile", "$out\dex\stdlib")) {
+    foreach ($f in (Get-ChildItem $src -Filter *.dex | Sort-Object Name)) {
+        Copy-Item $f.FullName "$out\finaldex\classes$next.dex"
+        $next++
+    }
 }
+New-Item -ItemType Directory -Path "$out\stage\lib\arm64-v8a" | Out-Null
+Copy-Item $goSo "$out\stage\lib\arm64-v8a\libgojni.so"
 $dexFiles = (Get-ChildItem "$out\finaldex" -Filter *.dex | Sort-Object Name | % Name)
 # jar's -C takes exactly ONE file; chain one -C per dex
 $jarArgs = @("uf", "$out\base.apk")
 foreach ($n in $dexFiles) { $jarArgs += @("-C", "$out\finaldex", $n) }
+$jarArgs += @("-C", "$out\stage", "lib/arm64-v8a/libgojni.so")
 & "$env:JAVA_HOME\bin\jar.exe" @jarArgs
 if ($LASTEXITCODE) { throw "jar uf failed" }
-Write-Host "[5/7] dex merged ($($dexFiles -join ', '))"
+Write-Host "[5/7] dex + .so merged ($($dexFiles -join ', '))"
 
 # 6) zipalign + 7) sign (debug keystore generated on first run)
 & "$env:BUILD_TOOLS\zipalign.exe" -f 4 "$out\base.apk" "$out\aligned.apk"
@@ -77,3 +129,18 @@ if ($LASTEXITCODE) { throw "apksigner sign failed" }
 & "$env:BUILD_TOOLS\apksigner.bat" verify "$out\dscore.apk"
 Write-Host "[6/7] zipalign OK"
 Write-Host "[7/7] signed -> $out\dscore.apk"
+
+# Archive every signed build. build\ is disposable by design, so without this a
+# rebuild silently replaces the only copy — which is exactly how the
+# pre-rename APK was lost. dist\ keeps the last 20, newest first.
+$dist = Join-Path $root "dist"
+New-Item -ItemType Directory -Path $dist -Force | Out-Null
+$stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$archive = Join-Path $dist "ds-next-$stamp.apk"
+Copy-Item "$out\dscore.apk" $archive
+$sha = (Get-FileHash $archive -Algorithm SHA256).Hash
+"$stamp  $sha  $archive" | Add-Content (Join-Path $dist "SHA256SUMS.txt")
+Get-ChildItem $dist -Filter "ds-next-*.apk" | Sort-Object LastWriteTime -Descending |
+    Select-Object -Skip 20 | ForEach-Object { Remove-Item $_.FullName -Force }
+Write-Host "[8/7] archived -> dist\ds-next-$stamp.apk"
+
