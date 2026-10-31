@@ -1,14 +1,31 @@
 # No-Gradle build for the dscore app: aapt2 -> kotlinc -> d8 (x2: app + stdlib)
-# -> jar uf -> zipalign -> apksigner. Run after dot-sourcing the toolchain env.
+# -> jar uf -> zipalign -> apksigner.
 #
-# Usage:  . C:\Users\Nobody\android-toolchain\env.ps1; & D:\dev-sidecar-android\build.ps1
+# Usage:  & build.ps1
+#         The local toolchain env.ps1 is dot-sourced when present; otherwise the
+#         CI environment must provide JAVA_HOME, ANDROID_JAR, BUILD_TOOLS and
+#         KOTLINC (see .github/workflows/build.yml).
 [CmdletBinding()]
 param()
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
-. C:\Users\Nobody\android-toolchain\env.ps1
+$localEnv = 'C:\Users\Nobody\android-toolchain\env.ps1'
+if (Test-Path $localEnv) { . $localEnv }
 
-$stdLib = "C:\Users\Nobody\android-toolchain\kotlin\lib\kotlin-stdlib.jar"
+foreach ($v in 'JAVA_HOME', 'ANDROID_JAR', 'BUILD_TOOLS', 'KOTLINC') {
+    if (-not (Get-Item "env:$v" -ErrorAction SilentlyContinue).Value) {
+        throw "$v is not set and no local toolchain env.ps1 was found"
+    }
+}
+
+# kotlin-stdlib ships next to the compiler; KOTLIN_STDLIB wins when it lives
+# somewhere else (the CI action installs it under lib/).
+$stdLib = if ($env:KOTLIN_STDLIB) {
+    $env:KOTLIN_STDLIB
+} else {
+    Join-Path (Split-Path $env:KOTLINC -Parent) '..\lib\kotlin-stdlib.jar'
+}
+$stdLib = [System.IO.Path]::GetFullPath($stdLib)
 if (-not (Test-Path $stdLib)) { throw "kotlin-stdlib.jar not found at $stdLib" }
 
 # The Go kernel ships as a gomobile AAR (classes.jar + libgojni.so), synced by

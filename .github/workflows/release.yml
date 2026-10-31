@@ -1,0 +1,76 @@
+name: Release
+
+# Tag push is the only trigger: it reuses build.yml so the published binary is
+# byte-for-byte what the normal build produced.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      version: ${{ github.ref_name }}
+
+  release:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download the APK
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: release
+
+      - name: Inspect the release files
+        run: ls -lah release
+
+      # A fork must not publish a release that looks official or that the update
+      # check could pick up, so it gets an alpha suffix and the prerelease flag.
+      - name: Compute the release identity
+        id: identity
+        shell: bash
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [ "$REPO" = "Blue-Frontier/dev-sidecar-android" ]; then
+            echo "title=$TAG" >> "$GITHUB_OUTPUT"
+            echo "is_fork=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "title=$TAG-alpha.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+            echo "is_fork=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create a draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          TITLE: ${{ steps.identity.outputs.title }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          gh release create "$TAG" release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TITLE" \
+            --draft \
+            --generate-notes \
+            --notes "DS NEXT $VERSION（arm64）。安装前先卸载旧版本应用，签名不同。"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,name,tagName
+
+      - name: Mark a fork build as prerelease
+        if: steps.identity.outputs.is_fork == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,name

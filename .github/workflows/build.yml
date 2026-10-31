@@ -1,0 +1,182 @@
+name: Build
+
+# One build path for every trigger: pushes and PRs build and upload, a tag calls
+# this same workflow from release.yml so the released binary is the tested one.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'dist/**'
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        description: Version name to stamp into the manifest (e.g. v0.2.0)
+        type: string
+        required: false
+        default: ''
+    outputs:
+      version:
+        description: Version name that ended up in the APK
+        value: ${{ jobs.build.outputs.version }}
+      artifact:
+        description: Artifact name holding the signed APK
+        value: ${{ jobs.build.outputs.artifact }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    # Pinned to the toolchain the app is developed against. The build is a shell
+    # chain (aapt2 -> kotlinc -> d8 -> zipalign -> apksigner) rather than Gradle,
+    # so these versions are what the scripts expect to find.
+    env:
+      KOTLIN_VERSION: '2.4.21'
+      BUILD_TOOLS_VERSION: '37.0.0'
+      NDK_VERSION: '29.0.14206865'
+      ANDROID_PLATFORM: '35'
+
+    outputs:
+      version: ${{ steps.version.outputs.name }}
+      artifact: ${{ steps.version.outputs.artifact }}
+
+    steps:
+      - name: Checkout (with the kernel submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install build-tools, platform and NDK
+        shell: pwsh
+        run: |
+          sdkmanager --install `
+            "platforms;android-$env:ANDROID_PLATFORM" `
+            "build-tools;$env:BUILD_TOOLS_VERSION" `
+            "ndk;$env:NDK_VERSION"
+          if ($LASTEXITCODE) { throw "sdkmanager failed" }
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache-dependency-path: kernel/go.sum
+
+      - name: Install gomobile
+        working-directory: kernel
+        shell: pwsh
+        run: |
+          # Same version the kernel module pins, so the bindings match go.mod.
+          $ver = go list -m -f '{{.Version}}' golang.org/x/mobile
+          go install "golang.org/x/mobile/cmd/gomobile@$ver"
+          if ($LASTEXITCODE) { throw "gomobile install failed" }
+          $bindir = Join-Path (go env GOPATH) 'bin'
+          $bindir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Install Kotlin compiler
+        uses: actions/cache@v4
+        id: kotlin-cache
+        with:
+          path: ${{ github.workspace }}\.toolchain
+          key: kotlin-${{ env.KOTLIN_VERSION }}
+
+      - name: Download Kotlin compiler (cache miss)
+        if: steps.kotlin-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $url = "https://github.com/JetBrains/kotlin/releases/download/v$env:KOTLIN_VERSION/kotlin-compiler-$env:KOTLIN_VERSION.zip"
+          New-Item -ItemType Directory -Force -Path .toolchain | Out-Null
+          Invoke-WebRequest -Uri $url -OutFile kotlin.zip
+          Expand-Archive -Path kotlin.zip -DestinationPath .toolchain -Force
+          Remove-Item kotlin.zip
+
+      - name: Export toolchain paths
+        shell: pwsh
+        run: |
+          $sdk = $env:ANDROID_HOME
+          $bt = Join-Path $sdk "build-tools\$env:BUILD_TOOLS_VERSION"
+          $kotlin = Join-Path $env:GITHUB_WORKSPACE '.toolchain\kotlinc'
+          $kotlinc = if (Test-Path "$kotlin\bin\kotlinc.bat") { "$kotlin\bin\kotlinc.bat" } else { "$kotlin\bin\kotlinc" }
+
+          "ANDROID_JAR=$(Join-Path $sdk "platforms\android-$env:ANDROID_PLATFORM\android.jar")" |
+            Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "BUILD_TOOLS=$bt" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "KOTLINC=$kotlinc" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "KOTLIN_STDLIB=$kotlin\lib\kotlin-stdlib.jar" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "ANDROID_NDK_HOME=$(Join-Path $sdk "ndk\$env:NDK_VERSION")" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+          # aapt2/d8/zipalign/apksigner live in build-tools; jar/keytool in the JDK.
+          "$bt" | Out-File $env:GITHUB_PATH -Append -Encoding utf8
+          "$kotlin\bin" | Out-File $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Stamp the version from the tag
+        id: version
+        shell: pwsh
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          $manifest = 'AndroidManifest.xml'
+          if ($env:INPUT_VERSION) {
+              $name = $env:INPUT_VERSION -replace '^v', ''
+              $code = [int]$env:GITHUB_RUN_NUMBER
+              $text = Get-Content $manifest -Raw
+              $text = $text -replace 'android:versionName="[^"]*"', "android:versionName=`"$name`""
+              $text = $text -replace 'android:versionCode="[^"]*"', "android:versionCode=`"$code`""
+              Set-Content $manifest -Value $text -NoNewline
+          } else {
+              $name = [regex]::Match((Get-Content $manifest -Raw), 'android:versionName="([^"]*)"').Groups[1].Value
+          }
+          $artifact = "DS-NEXT-$name-arm64"
+          "name=$name" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "artifact=$artifact" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "versionName=$name artifact=$artifact"
+
+      - name: Build the kernel AAR
+        working-directory: kernel
+        shell: pwsh
+        run: |
+          ./build-kernel-aar.ps1
+
+      - name: Sync the kernel into the app
+        shell: pwsh
+        run: |
+          ./sync-kernel.ps1
+
+      - name: Build and sign the APK
+        shell: pwsh
+        run: |
+          ./build.ps1
+
+      - name: Collect the release files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Copy-Item build\dscore.apk "release\${{ steps.version.outputs.artifact }}.apk"
+          $hash = (Get-FileHash "release\${{ steps.version.outputs.artifact }}.apk" -Algorithm SHA256).Hash
+          "$hash  ${{ steps.version.outputs.artifact }}.apk" | Set-Content release\SHA256SUMS.txt -Encoding utf8
+          Get-ChildItem release | Format-Table Name, Length
+
+      - name: Upload the APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.artifact }}
+          path: release/*
+          if-no-files-found: error
+          retention-days: 30
+
+
