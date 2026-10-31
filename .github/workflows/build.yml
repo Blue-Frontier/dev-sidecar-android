@@ -119,8 +119,13 @@ jobs:
         run: |
           # Same version the kernel module pins, so the bindings match go.mod.
           $ver = go list -m -f '{{.Version}}' golang.org/x/mobile
-          go install "golang.org/x/mobile/cmd/gomobile@$ver"
-          if ($LASTEXITCODE) { throw "gomobile install failed" }
+          # gomobile shells out to gobind, which is a separate command in the
+          # same module; a local GOPATH usually already has both, a fresh runner
+          # has neither.
+          foreach ($cmd in 'gomobile', 'gobind') {
+              go install "golang.org/x/mobile/cmd/$cmd@$ver"
+              if ($LASTEXITCODE) { throw "installing $cmd failed" }
+          }
           $bindir = Join-Path (go env GOPATH) 'bin'
           $bindir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
