@@ -116,11 +116,19 @@ dist/                         归档的签名 APK
 
   设置页会如实显示"当前模式：增强"。日志里有一行 `ds-mode: extra=ow ok=true current=ow` 可核对。
 
+## 日志
+
+内核把日志写到 `files/kernel.log`（应用私有目录）。设置页的「内核日志」卡片显示最近 12 行，下面两个按钮把它交给别人：
+
+- **复制全文**：把文件尾部 256 KB 放进剪贴板，直接贴进 issue
+- **分享文件**：通过 `content://…logs/kernel.log` 调起系统分享，微信、邮件、网盘都能收；`file://` 早就被分享目标拒收了，应用没有 AndroidX 也就没有 FileProvider，所以自己实现了一个只暴露这一个文件的 `LogProvider`
+
 ## 已知限制
 
 - `shouldInterceptRequest` 不暴露请求体，因此非 GET/HEAD 请求返回 501；页面里的 POST/XHR 会失败。
 - minSdk 29（内核依赖的 TLS 行为与 29 对齐），arm64 only。
 - 桌面端用于代理其它应用的场景在手机端未实现：本应用只转发自己的 WebView。
+
 
 
 

@@ -55,6 +55,14 @@
             android:exported="false"
             android:configChanges="orientation|screenSize|keyboardHidden" />
 
+        <!-- Serves files/kernel.log as a content:// URI so the share sheet can
+             hand it to WeChat/mail; only that one file is reachable. -->
+        <provider
+            android:name=".LogProvider"
+            android:authorities="org.blueFrontier.devSideCar.next.android.logs"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
         <!-- Keeps the process, and therefore the in-process Go kernel, alive
              while the app is in the background. -->
         <service
@@ -67,6 +75,7 @@
         </service>
     </application>
 </manifest>
+
 
 
 

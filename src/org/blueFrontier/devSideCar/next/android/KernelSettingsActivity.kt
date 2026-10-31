@@ -345,6 +345,17 @@ class KernelSettingsActivity : Activity() {
             typeface = Typeface.MONOSPACE
         }
         logCard.addView(logBox)
+        // Issue reports need the whole file, not the twelve lines on screen.
+        val logRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        logRow.addView(Button(this).apply {
+            text = "复制全文"
+            setOnClickListener { copyLog() }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        logRow.addView(Button(this).apply {
+            text = "分享文件"
+            setOnClickListener { shareLog() }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        logCard.addView(logRow)
         root.addView(logCard)
 
         val scroll = ScrollView(this).apply { addView(root) }
@@ -617,6 +628,38 @@ class KernelSettingsActivity : Activity() {
         }
     }
 
+    /** Copies the tail of the log so it can be pasted into an issue. */
+    private fun copyLog() {
+        val text = tail(File(filesDir, LogProvider.LOG_NAME), 256 * 1024)
+        if (text.isBlank()) {
+            logBox.text = "（暂无日志）"
+            return
+        }
+        val cm = getSystemService(android.content.ClipboardManager::class.java)
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("DS NEXT kernel log", text))
+        logBox.text = "已复制 ${text.length} 字符到剪贴板"
+    }
+
+    /** Hands the log file itself to any share target (mail, IM, file manager). */
+    private fun shareLog() {
+        val file = File(filesDir, LogProvider.LOG_NAME)
+        if (!file.exists() || file.length() == 0L) {
+            logBox.text = "（暂无日志）"
+            return
+        }
+        // file:// is rejected by current share targets, hence the provider.
+        val uri = LogProvider.uriFor(this)
+        val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            putExtra(android.content.Intent.EXTRA_SUBJECT, "DS NEXT 内核日志")
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        runCatching {
+            startActivity(android.content.Intent.createChooser(send, "分享内核日志"))
+        }.onFailure { logBox.text = "没有可用的分享目标" }
+    }
+
     private fun tail(file: File, maxBytes: Int): String = runCatching {
         RandomAccessFile(file, "r").use { raf ->
             val length = raf.length()
@@ -695,6 +738,7 @@ class KernelSettingsActivity : Activity() {
         private val ACCENT = Color.parseColor("#2FD8A6")
     }
 }
+
 
 
 

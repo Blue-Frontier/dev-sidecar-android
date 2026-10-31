@@ -21,3 +21,6 @@ Thumbs.db
 .recover/
 _probe/
 
+# 内核 AAR 的派生产物，由 kernel/ 源码构建并 sync 出来
+libs/
+
