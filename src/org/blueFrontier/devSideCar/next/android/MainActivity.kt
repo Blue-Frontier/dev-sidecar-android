@@ -9,16 +9,40 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import java.net.InetSocketAddress
 
 /**
- * The browser shell: one navigation row (back, forward, reload, home, address,
- * settings) over a WebView whose requests are fetched through the kernel.
+ * The browser shell: one row (history, reload, home, address, tabs, settings)
+ * over the active tab's WebView. Every tab owns its own WebView so each keeps
+ * its own history and scroll position; only the active one is attached.
  */
 class MainActivity : Activity() {
 
+    /**
+     * One tab. Only the visible tab has a live WebView: the others keep their
+     * URL, title and visit log, so any number of tabs costs one renderer and a
+     * switch reloads from the HTTP cache instead of holding them all in memory.
+     */
+    private class Tab(var url: String) {
+        var title: String = ""
+
+        /**
+         * This tab's own visit log. The WebView keeps one global back/forward
+         * list, so with a single WebView that list would mix every tab's pages;
+         * recording here keeps back/forward per tab, at the cost of reloading
+         * from cache when a tab is shown again.
+         */
+        val history = mutableListOf<String>()
+        var cursor = -1
+    }
+
+    private val tabs = mutableListOf<Tab>()
+    private var active = -1
+    private lateinit var pageHost: FrameLayout
     private lateinit var web: WebView
+
     private lateinit var urlField: EditText
 
     private val prefs by lazy { getSharedPreferences("ds-app", MODE_PRIVATE) }
@@ -58,29 +82,25 @@ class MainActivity : Activity() {
             false
         }
 
-        // One row: navigation, the address in the middle, settings on the right.
+        // One row: history, reload, home, the address, tabs, settings. All six
+        // buttons share one width so the row stays even.
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
-            setPadding(dp(10), dp(6), dp(10), dp(6))
-            addView(navButton("←") { if (web.canGoBack()) web.goBack() })
-            addView(navButton("→") { if (web.canGoForward()) web.goForward() })
-            addView(navButton("⟳") { web.reload() })
-            addView(navButton("⌂") { goHome() })
+            setPadding(dp(6), dp(4), dp(6), dp(4))
+            addView(navButton("🕘", "历史记录") { showHistory() })
+            addView(navButton("⟳", "刷新") { if (tabs.isNotEmpty()) web.reload() })
+            addView(navButton("⌂", "主页") { goHome() })
             addView(
                 urlField,
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                    marginStart = 16
-                    marginEnd = 16
+                    marginStart = dp(8)
+                    marginEnd = dp(8)
                 },
             )
-            addView(Button(this@MainActivity).apply {
-                text = "⚙"
-                setTextColor(CHROME_TEXT)
-                backgroundTintList = android.content.res.ColorStateList.valueOf(CHROME_SURFACE)
-                setOnClickListener {
-                    startActivity(android.content.Intent(this@MainActivity, KernelSettingsActivity::class.java))
-                }
+            addView(navButton("▣", "标签页") { showTabs() })
+            addView(navButton("⚙", "设置") {
+                startActivity(android.content.Intent(this@MainActivity, KernelSettingsActivity::class.java))
             })
         }
 
@@ -90,59 +110,26 @@ class MainActivity : Activity() {
             isIndeterminate = false
             visibility = android.view.View.GONE
         }
-
+        pageHost = FrameLayout(this)
         web = WebView(this).apply {
-            webChromeClient = object : android.webkit.WebChromeClient() {
-                override fun onProgressChanged(view: WebView, newProgress: Int) {
-                    val bar = this@MainActivity.progress
-                    bar.progress = newProgress
-                    bar.visibility = if (newProgress >= 100) {
-                        android.view.View.GONE
-                    } else {
-                        android.view.View.VISIBLE
-                    }
-                }
-            }
-            // The whole WebView goes through the kernel as an HTTP proxy
-            // (applyProxy). Per-request interception cannot carry a POST body,
-            // which is what broke every login form.
-            webViewClient = object : android.webkit.WebViewClient() {
-                override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
-                    if (!urlField.hasFocus()) urlField.setText(url)
-                }
-
-                override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
-                    this@MainActivity.progress.visibility = android.view.View.VISIBLE
-                }
-
-                override fun onPageFinished(view: WebView, url: String) {
-                    this@MainActivity.progress.visibility = android.view.View.GONE
-                }
-
-                override fun onReceivedSslError(
-                    view: WebView,
-                    handler: android.webkit.SslErrorHandler,
-                    error: android.net.http.SslError,
-                ) {
-                    // The kernel CA is an app trust anchor, so its chains
-                    // validate normally; this covers the rest.
-                    val issuer = error.certificate?.issuedBy?.cName ?: ""
-                    if (issuer.contains(KERNEL_CA_ISSUER)) handler.proceed() else handler.cancel()
-                }
-            }
+            applySettings(this)
+            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
         }
+        pageHost.addView(
+            web,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(CHROME_BG)
             addView(row)
             addView(progress, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 6))
-            addView(
-                web,
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = 12 },
-            )
+            addView(pageHost, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         }
-        // edge-to-edge (targetSdk 35+): reserve space for the status/nav bars ourselves.
         // Edge to edge: the page fills the screen width. Only the toolbar keeps
         // a horizontal inset, otherwise the dark window colour frames the white
         // page with a visible border on both sides.
@@ -151,30 +138,6 @@ class MainActivity : Activity() {
             insets
         }
         setContentView(root)
-
-        val settings = web.settings
-        // `am start --ez nojs true` keeps script off for one run, which is how
-        // the "is Google's /sorry redirect script-driven?" question gets a
-        // straight answer on a real device.
-        settings.javaScriptEnabled = !intent.getBooleanExtra("nojs", false)
-        settings.domStorageEnabled = true
-        settings.databaseEnabled = true
-        settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-        // Google's page script redirects anything advertising itself as an
-        // embedded WebView (the "; wv" marker and "Version/4.0") to its
-        // /sorry/index abuse page right after a search returns 200. The renderer
-        // is ordinary Chromium, so report the plain mobile Chrome identity.
-        settings.userAgentString = settings.userAgentString
-            .replace("; wv)", ")")
-            .replace(Regex("""\s*Version/\S+"""), "")
-
-        // Logins must survive a restart: the WebView keeps localStorage and
-        // IndexedDB on disk under the app's private dir, cookies are persisted
-        // when flushed in onPause, and third-party cookies keep OAuth and CDN
-        // asset flows working. The last URL is restored too.
-        val cookies = CookieManager.getInstance()
-        cookies.setAcceptCookie(true)
-        cookies.setAcceptThirdPartyCookies(web, true)
 
         // The kernel lives in this process: bring it up synchronously so the
         // listener is bound before the first navigation, then let the service
@@ -196,8 +159,166 @@ class MainActivity : Activity() {
         val initial = startUrl ?: BrowserPrefs.home(this)
         urlField.setText(initial)
         // The override is asynchronous; navigate only once it is in place.
-        applyProxy { web.loadUrl(initial) }
+        applyProxy { newTab(initial) }
     }
+
+    // ---------------------------------------------------------------- tabs
+
+    private fun newTab(url: String?) {
+        val target = url ?: BrowserPrefs.home(this)
+        tabs.add(Tab(target))
+        switchTab(tabs.size - 1, force = true)
+    }
+
+    private fun switchTab(index: Int, force: Boolean = false) {
+        if (index !in tabs.indices) return
+        if (index == active && !force) return
+        active = index
+        val tab = tabs[index]
+        urlField.setText(tab.url)
+        progress.visibility = android.view.View.GONE
+        web.loadUrl(tab.url)
+        web.requestFocus()
+    }
+
+    /** Appends a visit to the tab's own history, dropping any forward entries. */
+    private fun record(tab: Tab, url: String) {
+        if (url.isBlank() || url == "about:blank") return
+        if (tab.history.getOrNull(tab.cursor) == url) return
+        while (tab.history.size > tab.cursor + 1) {
+            tab.history.removeAt(tab.history.size - 1)
+        }
+        tab.history.add(url)
+        tab.cursor = tab.history.size - 1
+    }
+
+    private fun closeTab(index: Int) {
+        val tab = tabs.getOrNull(index) ?: return
+        tabs.removeAt(index)
+        when {
+            tabs.isEmpty() -> {
+                active = -1
+                web.loadUrl("about:blank")
+                newTab(BrowserPrefs.home(this))
+            }
+            index == active -> {
+                active = -1
+                switchTab(index.coerceAtMost(tabs.size - 1), force = true)
+            }
+            index < active -> active -= 1
+        }
+
+    }
+
+    private fun showTabs() {
+        val labels = tabs.mapIndexed { index, tab ->
+            val title = tab.title.ifBlank { tab.url.substringAfter("://").ifBlank { "新标签页" } }
+            (if (index == active) "● " else "○ ") + title + "\n" + tab.url
+        }.toTypedArray()
+        android.app.AlertDialog.Builder(this)
+            .setTitle("标签页（${tabs.size}）")
+            .setItems(labels) { _, which -> switchTab(which) }
+            .setPositiveButton("新建") { _, _ -> newTab(BrowserPrefs.home(this)) }
+            .setNeutralButton("关闭当前") { _, _ -> if (active in tabs.indices) closeTab(active) }
+            .show()
+    }
+
+    /** This tab's own history, so back and forward share one button. */
+    private fun showHistory() {
+        val tab = tabs.getOrNull(active) ?: return
+        if (tab.history.isEmpty()) return
+        val labels = tab.history.mapIndexed { i, url ->
+            (if (i == tab.cursor) "● " else "○ ") + url
+        }.toTypedArray()
+        android.app.AlertDialog.Builder(this)
+            .setTitle("历史记录")
+            .setItems(labels) { _, which ->
+                tab.cursor = which
+                tab.url = tab.history[which]
+                web.loadUrl(tab.url)
+            }
+            .setNeutralButton("后退") { _, _ ->
+                if (tab.cursor > 0) {
+                    tab.cursor -= 1
+                    tab.url = tab.history[tab.cursor]
+                    web.loadUrl(tab.url)
+                }
+            }
+            .setPositiveButton("前进") { _, _ ->
+                if (tab.cursor + 1 < tab.history.size) {
+                    tab.cursor += 1
+                    tab.url = tab.history[tab.cursor]
+                    web.loadUrl(tab.url)
+                }
+            }
+            .show()
+    }
+
+    // -------------------------------------------------------------- webview
+
+    private fun applySettings(view: WebView) {
+        val settings = view.settings
+        // `am start --ez nojs true` keeps script off for one run, which is how
+        // the "is Google's /sorry redirect script-driven?" question gets a
+        // straight answer on a real device.
+        settings.javaScriptEnabled = !intent.getBooleanExtra("nojs", false)
+        settings.domStorageEnabled = true
+        settings.databaseEnabled = true
+        settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+        // Google's page script redirects anything advertising itself as an
+        // embedded WebView (the "; wv" marker and "Version/4.0") to its
+        // /sorry/index abuse page right after a search returns 200. The renderer
+        // is ordinary Chromium, so report the plain mobile Chrome identity.
+        settings.userAgentString = settings.userAgentString
+            .replace("; wv)", ")")
+            .replace(Regex("""\s*Version/\S+"""), "")
+
+        view.webChromeClient = object : android.webkit.WebChromeClient() {
+            override fun onProgressChanged(wv: WebView, newProgress: Int) {
+
+                progress.progress = newProgress
+                progress.visibility = if (newProgress >= 100) {
+                    android.view.View.GONE
+                } else {
+                    android.view.View.VISIBLE
+                }
+            }
+
+            override fun onReceivedTitle(wv: WebView, title: String) {
+                tabs.getOrNull(active)?.title = title
+            }
+        }
+        view.webViewClient = object : android.webkit.WebViewClient() {
+            override fun doUpdateVisitedHistory(wv: WebView, url: String, isReload: Boolean) {
+                tabs.getOrNull(active)?.let {
+                    it.url = url
+                    record(it, url)
+                }
+                if (!urlField.hasFocus()) urlField.setText(url)
+            }
+
+            override fun onPageStarted(wv: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                progress.visibility = android.view.View.VISIBLE
+            }
+
+            override fun onPageFinished(wv: WebView, url: String) {
+                progress.visibility = android.view.View.GONE
+            }
+
+            override fun onReceivedSslError(
+                wv: WebView,
+                handler: android.webkit.SslErrorHandler,
+                error: android.net.http.SslError,
+            ) {
+                // The kernel CA is an app trust anchor, so its chains
+                // validate normally; this covers the rest.
+                val issuer = error.certificate?.issuedBy?.cName ?: ""
+                if (issuer.contains(KERNEL_CA_ISSUER)) handler.proceed() else handler.cancel()
+            }
+        }
+    }
+
+    // -------------------------------------------------------------- plumbing
 
     /** Points the WebView at the in-process kernel. */
     private fun applyProxy(then: () -> Unit) {
@@ -224,6 +345,9 @@ class MainActivity : Activity() {
         runCatching {
             androidx.webkit.ProxyController.getInstance().clearProxyOverride(proxyExecutor) {}
         }
+        pageHost.removeView(web)
+        web.destroy()
+        tabs.clear()
         super.onDestroy()
     }
 
@@ -245,7 +369,7 @@ class MainActivity : Activity() {
         }
         from.getStringExtra("url")?.takeIf { it.isNotBlank() }?.let {
             urlField.setText(it)
-            web.loadUrl(it)
+            if (tabs.isNotEmpty()) web.loadUrl(it)
         }
     }
 
@@ -255,15 +379,13 @@ class MainActivity : Activity() {
         applyIntentExtras(intent)
     }
 
-    override fun onResume() {
-        super.onResume()
-    }
-
     override fun onPause() {
         super.onPause()
-        prefs.edit()
-            .putString(KEY_LAST_URL, web.url ?: urlField.text.toString())
-            .apply()
+        if (tabs.isNotEmpty()) {
+            prefs.edit()
+                .putString(KEY_LAST_URL, web.url ?: urlField.text.toString())
+                .apply()
+        }
         // Cookie writes are asynchronous; without this a freshly issued login
         // cookie can be lost if the process is killed soon after.
         CookieManager.getInstance().flush()
@@ -277,23 +399,25 @@ class MainActivity : Activity() {
         return InetSocketAddress(host, port)
     }
 
-    /** Round, roomy buttons for the navigation row. */
-    private fun navButton(label: String, onClick: () -> Unit): Button =
+    /** Evenly sized buttons for the navigation row. */
+    private fun navButton(label: String, description: String, onClick: () -> Unit): Button =
         Button(this).apply {
             text = label
+            contentDescription = description
             textSize = 16f
             minWidth = 0
             minimumWidth = 0
-            setPadding(20, 4, 20, 4)
+            setPadding(0, dp(4), 0, dp(4))
             setTextColor(CHROME_TEXT)
             backgroundTintList = android.content.res.ColorStateList.valueOf(CHROME_SURFACE)
+            layoutParams = LinearLayout.LayoutParams(dp(42), ViewGroup.LayoutParams.WRAP_CONTENT)
             setOnClickListener { onClick() }
         }
 
     private fun goHome() {
         val home = BrowserPrefs.home(this)
         urlField.setText(home)
-        web.loadUrl(home)
+        if (tabs.isNotEmpty()) web.loadUrl(home) else newTab(home)
     }
 
     private fun loadUrl() {
@@ -303,7 +427,7 @@ class MainActivity : Activity() {
         // "nothing happened". Dismiss it and hand focus back to the WebView.
         hideKeyboard()
         val target = if (raw.contains("://") || raw.startsWith("about:")) raw else "https://$raw"
-        web.loadUrl(target)
+        if (tabs.isEmpty()) newTab(target) else web.loadUrl(target)
     }
 
     private fun dp(v: Int): Int = Math.round(v * resources.displayMetrics.density)
@@ -312,7 +436,7 @@ class MainActivity : Activity() {
         val imm = getSystemService(android.view.inputmethod.InputMethodManager::class.java)
         imm?.hideSoftInputFromWindow(urlField.windowToken, 0)
         urlField.clearFocus()
-        web.requestFocus()
+        if (tabs.isNotEmpty()) web.requestFocus()
     }
 
     companion object {
@@ -328,13 +452,6 @@ class MainActivity : Activity() {
         const val DEFAULT_HOST = "127.0.0.1"
     }
 }
-
-
-
-
-
-
-
 
 
 
