@@ -182,10 +182,14 @@ jobs:
           $manifest = 'AndroidManifest.xml'
           if ($env:INPUT_VERSION) {
               $name = $env:INPUT_VERSION -replace '^v', ''
-              $code = [int]$env:GITHUB_RUN_NUMBER
+              # Same formula as build.ps1 so a local build and a release share
+              # one scheme: major*10000 + minor*100 + patch.
+              $parts = $name -split '\.'
+              while ($parts.Count -lt 3) { $parts += '0' }
+              $code = [int]$parts[0] * 10000 + [int]$parts[1] * 100 + [int]$parts[2]
               $text = Get-Content $manifest -Raw
-              $text = $text -replace 'android:versionName="[^"]*"', "android:versionName=`"$name`""
-              $text = $text -replace 'android:versionCode="[^"]*"', "android:versionCode=`"$code`""
+              $text = $text -replace 'android:versionName="[^"]*"', "android:versionName=`"$name"""
+              $text = $text -replace 'android:versionCode="[^"]*"', "android:versionCode=`"$code"""
               Set-Content $manifest -Value $text -NoNewline
           } else {
               $name = [regex]::Match((Get-Content $manifest -Raw), 'android:versionName="([^"]*)"').Groups[1].Value
@@ -234,6 +238,8 @@ jobs:
           path: release/*
           if-no-files-found: error
           retention-days: 30
+
+
 
 
 

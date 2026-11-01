@@ -7,6 +7,12 @@
 #         KOTLINC (see .github/workflows/build.yml).
 [CmdletBinding()]
 param()
+
+function Get-VersionCode([string]$name) {
+    $parts = ($name -split '\.') | ForEach-Object { ($_ -replace '[^0-9].*$', '') }
+    while ($parts.Count -lt 3) { $parts += '0' }
+    return ([int]$parts[0] * 10000) + ([int]$parts[1] * 100) + [int]$parts[2]
+}
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 $localEnv = 'C:\Users\Nobody\android-toolchain\env.ps1'
@@ -80,7 +86,15 @@ New-Item -ItemType Directory -Path $out | Out-Null
 #    compiled resources (aapt2 has no -S; compiled flat files are inputs).
 & "$env:BUILD_TOOLS\aapt2.exe" compile --dir "$root\res" -o "$out\res.zip"
 if ($LASTEXITCODE) { throw "aapt2 compile failed" }
+# versionCode/versionName come from one formula for every build, local or CI:
+# major*10000 + minor*100 + patch. They used to differ (a date here, the CI run
+# number there), which made a locally installed build impossible to replace
+# with the next release.
+$manifestText = Get-Content "$root\AndroidManifest.xml" -Raw
+$versionName = if ($manifestText -match 'android:versionName="([^"]+)"') { $Matches[1] } else { "0.0.0" }
+$versionCode = Get-VersionCode $versionName
 & "$env:BUILD_TOOLS\aapt2.exe" link -I $env:ANDROID_JAR --manifest "$root\AndroidManifest.xml" `
+    --version-code $versionCode --version-name $versionName `
     -A "$root\assets" -o "$out\base.apk" "$out\res.zip"
 if ($LASTEXITCODE) { throw "aapt2 link failed" }
 Write-Host "[1/7] aapt2 link OK"
@@ -198,5 +212,7 @@ $sha = (Get-FileHash $archive -Algorithm SHA256).Hash
 Get-ChildItem $dist -Filter "ds-next-*.apk" | Sort-Object LastWriteTime -Descending |
     Select-Object -Skip 20 | ForEach-Object { Remove-Item $_.FullName -Force }
 Write-Host "[8/7] archived -> dist\ds-next-$stamp.apk"
+
+
 
 
