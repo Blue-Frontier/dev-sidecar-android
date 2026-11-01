@@ -475,6 +475,24 @@ class MainActivity : Activity() {
                 wv.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
             }
 
+            override fun onReceivedHttpError(
+                wv: WebView, request: android.webkit.WebResourceRequest,
+                error: android.webkit.WebResourceResponse,
+            ) {
+                // The kernel answers a failed dial with 502 rather than a socket
+                // error, so without this the tab stays blank.
+                if (!request.isForMainFrame || error.statusCode < 500) return
+                val html = """
+                    <html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+                    <style>body{font:16px -apple-system,sans-serif;padding:32px;color:#333}</style></head>
+                    <body><h3>打不开这个页面</h3>
+                    <p>${request.url}</p>
+                    <p>内核返回 HTTP ${error.statusCode}${error.reasonPhrase?.let { "（$it）" } ?: ""}</p>
+                    <p>如果这是被墙的站点，换个网络或稍后重试；也可以到设置里确认内核在运行。</p></body></html>
+                """.trimIndent()
+                wv.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+            }
+
             override fun onReceivedSslError(
                 wv: WebView,
                 handler: android.webkit.SslErrorHandler,
@@ -566,6 +584,13 @@ class MainActivity : Activity() {
         // Automation hooks: touch input does not reach the app on every device,
         // and these make the menu and the search path checkable from adb.
         if (from.getBooleanExtra("menu", false)) showMenu()
+        when (from.getStringExtra("action")) {
+            "bookmarks" -> showBookmarks()
+            "history" -> showHistoryAll()
+            "find" -> findInPage()
+            "desktop" -> toggleDesktopMode()
+            "clear" -> clearBrowsingData()
+        }
         from.getStringExtra("search")?.takeIf { it.isNotBlank() }?.let { openUrl(searchUrl(it)) }
     }
 
@@ -894,6 +919,8 @@ class MainActivity : Activity() {
         const val DEFAULT_HOST = "127.0.0.1"
     }
 }
+
+
 
 
 
