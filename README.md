@@ -118,6 +118,12 @@ dist/                         归档的签名 APK
 
   设置页会如实显示"当前模式：增强"。日志里有一行 `ds-mode: extra=ow ok=true current=ow` 可核对。
 
+## 图标
+
+用的是桌面版 `packages/gui/dist/icon-1.png`（透明底 + 蓝色分子），不是安装包里那套 `build/icons/*.png`（蓝底白分子）。
+
+这是**有意区分**：手机版和桌面版在视觉上分开，透明底交给启动器自己铺背景，各家 ROM 下也都能看。不要为了"和桌面版一致"换掉它。
+
 ## 日志
 
 内核把日志写到 `files/kernel.log`（应用私有目录）。设置页的「内核日志」卡片显示最近 12 行，下面两个按钮把它交给别人：
@@ -130,6 +136,7 @@ dist/                         归档的签名 APK
 - `shouldInterceptRequest` 不暴露请求体，因此非 GET/HEAD 请求返回 501；页面里的 POST/XHR 会失败。
 - minSdk 29（内核依赖的 TLS 行为与 29 对齐）。发布时按架构拆成两个包：`DS-NEXT-<版本>-arm64.apk`（约 7.6 MB）和 `DS-NEXT-<版本>-x86_64.apk`（约 8.3 MB），装错了系统会直接拒绝。本地要单个架构就用 `-Target android/arm64` 或 `android/amd64` 构建内核。
 - 桌面端用于代理其它应用的场景在手机端未实现：本应用只转发自己的 WebView。
+
 
 
 
