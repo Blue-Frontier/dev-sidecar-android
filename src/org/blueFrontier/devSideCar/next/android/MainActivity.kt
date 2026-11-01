@@ -305,6 +305,10 @@ class MainActivity : Activity() {
         settings.setSupportMultipleWindows(true)
         settings.javaScriptCanOpenWindowsAutomatically = true
         settings.textZoom = BrowserPrefs.textZoom(this)
+        // A MediaStream handed to <video> only paints when the page may play
+        // without a fresh gesture and the view is hardware accelerated; without
+        // this the camera opens but the preview stays black.
+        settings.mediaPlaybackRequiresUserGesture = false
         applyDarkMode(settings)
 
         view.webChromeClient = object : android.webkit.WebChromeClient() {
@@ -316,6 +320,13 @@ class MainActivity : Activity() {
                 } else {
                     android.view.View.VISIBLE
                 }
+            }
+
+            override fun onConsoleMessage(message: android.webkit.ConsoleMessage): Boolean {
+                // Pages report permission and playback failures only here, which
+                // is how a silent "no dialog" becomes diagnosable.
+                android.util.Log.i("ds-jsc", "${message.messageLevel()} ${message.message()} @${message.sourceId()}:${message.lineNumber()}")
+                return true
             }
 
             override fun onJsAlert(
@@ -928,6 +939,10 @@ class MainActivity : Activity() {
         const val DEFAULT_HOST = "127.0.0.1"
     }
 }
+
+
+
+
 
 
 
