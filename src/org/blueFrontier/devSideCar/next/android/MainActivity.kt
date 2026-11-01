@@ -42,6 +42,8 @@ class MainActivity : Activity() {
             setHintTextColor(CHROME_MUTED)
             setBackgroundColor(CHROME_SURFACE)
             setPadding(24, 12, 24, 12)
+            // Tapping the address should replace it, not append at the caret.
+            setSelectAllOnFocus(true)
         }
         urlField.setOnEditorActionListener { _, _, _ -> loadUrl(); true }
         // A hardware Enter does not produce an IME action, so handle the key too.
@@ -84,11 +86,22 @@ class MainActivity : Activity() {
         progress = android.widget.ProgressBar(
             this, null, android.R.attr.progressBarStyleHorizontal,
         ).apply {
-            isIndeterminate = true
+            isIndeterminate = false
             visibility = android.view.View.GONE
         }
 
         web = WebView(this).apply {
+            webChromeClient = object : android.webkit.WebChromeClient() {
+                override fun onProgressChanged(view: WebView, newProgress: Int) {
+                    val bar = this@MainActivity.progress
+                    bar.progress = newProgress
+                    bar.visibility = if (newProgress >= 100) {
+                        android.view.View.GONE
+                    } else {
+                        android.view.View.VISIBLE
+                    }
+                }
+            }
             // The whole WebView goes through the kernel as an HTTP proxy
             // (applyProxy). Per-request interception cannot carry a POST body,
             // which is what broke every login form.
@@ -309,6 +322,8 @@ class MainActivity : Activity() {
         const val DEFAULT_HOST = "127.0.0.1"
     }
 }
+
+
 
 
 
