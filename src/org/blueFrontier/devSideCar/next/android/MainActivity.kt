@@ -168,11 +168,16 @@ class MainActivity : Activity() {
 
         // `am start --es url X` drives a load from adb (automation, QR handoff);
         // otherwise resume the last page, and on a fresh install open the home page.
-        val startUrl = intent.getStringExtra("url") ?: prefs.getString(KEY_LAST_URL, null)
+        // A link handed to us (other apps, adb) outranks the restored session:
+        // without this the tab restore swallows every incoming URL.
+        val incoming = intentUrl(intent)
+        val startUrl = incoming ?: prefs.getString(KEY_LAST_URL, null)
         val initial = startUrl ?: BrowserPrefs.home(this)
         urlField.setText(initial)
         // The override is asynchronous; navigate only once it is in place.
-        applyProxy { if (!restoreTabs()) newTab(initial) }
+        applyProxy {
+            if (incoming != null) newTab(incoming) else if (!restoreTabs()) newTab(initial)
+        }
     }
 
     // ---------------------------------------------------------------- tabs
@@ -530,6 +535,13 @@ class MainActivity : Activity() {
      * `am start` on a running instance may be swallowed as a task bring-to-front
      * (no onCreate, no onNewIntent), so switching modes from adb needs `-S`.
      */
+    /** The URL a fresh intent asks for: an explicit extra or a VIEW link. */
+    private fun intentUrl(intent: android.content.Intent): String? {
+        intent.getStringExtra("url")?.takeIf { it.isNotBlank() }?.let { return it }
+        val data = intent.data ?: return null
+        return data.toString().takeIf { data.scheme == "http" || data.scheme == "https" }
+    }
+
     private fun applyIntentExtras(from: android.content.Intent) {
         from.getStringExtra("mode")?.takeIf { it.isNotBlank() }?.let { requested ->
             val ok = KernelRuntime.setMode(this, requested)
@@ -538,15 +550,19 @@ class MainActivity : Activity() {
                 "extra=$requested ok=$ok current=${KernelRuntime.currentMode(this)}",
             )
         }
-        from.getStringExtra("url")?.takeIf { it.isNotBlank() }?.let {
-            urlField.setText(it)
-            if (tabs.isNotEmpty()) web.loadUrl(it)
+        intentUrl(from)?.let { url ->
+            urlField.setText(url)
+            if (tabs.isNotEmpty()) openUrl(url) else newTab(url)
         }
         // `am start --ez downloads true` opens the download list, which is the
         // only way to drive a transfer from adb (the activity is not exported).
         if (from.getBooleanExtra("downloads", false)) {
             startActivity(android.content.Intent(this, DownloadsActivity::class.java))
         }
+        // Automation hooks: touch input does not reach the app on every device,
+        // and these make the menu and the search path checkable from adb.
+        if (from.getBooleanExtra("menu", false)) showMenu()
+        from.getStringExtra("search")?.takeIf { it.isNotBlank() }?.let { openUrl(searchUrl(it)) }
     }
 
     @Suppress("DEPRECATION")
@@ -874,6 +890,8 @@ class MainActivity : Activity() {
         const val DEFAULT_HOST = "127.0.0.1"
     }
 }
+
+
 
 
 
