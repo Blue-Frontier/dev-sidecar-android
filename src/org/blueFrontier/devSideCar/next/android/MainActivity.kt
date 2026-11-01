@@ -49,6 +49,12 @@ class MainActivity : Activity() {
     private val prefs by lazy { getSharedPreferences("ds-app", MODE_PRIVATE) }
     private val proxyExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
     private lateinit var progress: android.widget.ProgressBar
+    /** Pending <input type="file"> chooser; its result goes back to the page. */
+    private var pendingFiles: android.webkit.ValueCallback<Array<android.net.Uri>>? = null
+    /** Camera/microphone request waiting for the runtime permission answer. */
+    private var pendingPermission: android.webkit.PermissionRequest? = null
+    /** Fullscreen video container, stacked on top of the content view. */
+    private var fullscreen: android.widget.FrameLayout? = null
     private val kernelPrefs by lazy { getSharedPreferences("ds-kernel", MODE_PRIVATE) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -170,8 +176,8 @@ class MainActivity : Activity() {
 
     // ---------------------------------------------------------------- tabs
 
-    private fun newTab(url: String?) {
-        val target = url ?: BrowserPrefs.home(this)
+    private fun newTab(url: String?, blank: Boolean = false) {
+        val target = url ?: if (blank) "about:blank" else BrowserPrefs.home(this)
         tabs.add(Tab(target))
         switchTab(tabs.size - 1, force = true)
     }
@@ -290,6 +296,125 @@ class MainActivity : Activity() {
                 }
             }
 
+            override fun onJsAlert(
+                wv: WebView, url: String, message: String, result: android.webkit.JsResult,
+            ): Boolean {
+                android.app.AlertDialog.Builder(this@MainActivity)
+                    .setMessage(message)
+                    .setPositiveButton("确定") { _, _ -> result.confirm() }
+                    .setOnCancelListener { result.cancel() }
+                    .show()
+                return true
+            }
+
+            override fun onJsConfirm(
+                wv: WebView, url: String, message: String, result: android.webkit.JsResult,
+            ): Boolean {
+                android.app.AlertDialog.Builder(this@MainActivity)
+                    .setMessage(message)
+                    .setPositiveButton("确定") { _, _ -> result.confirm() }
+                    .setNegativeButton("取消") { _, _ -> result.cancel() }
+                    .setOnCancelListener { result.cancel() }
+                    .show()
+                return true
+            }
+
+            override fun onJsPrompt(
+                wv: WebView, url: String, message: String, defaultValue: String?,
+                result: android.webkit.JsPromptResult,
+            ): Boolean {
+                val input = android.widget.EditText(this@MainActivity).apply {
+                    setText(defaultValue ?: "")
+                    setSelection(text.length)
+                }
+                android.app.AlertDialog.Builder(this@MainActivity)
+                    .setMessage(message)
+                    .setView(input)
+                    .setPositiveButton("确定") { _, _ -> result.confirm(input.text.toString()) }
+                    .setNegativeButton("取消") { _, _ -> result.cancel() }
+                    .setOnCancelListener { result.cancel() }
+                    .show()
+                return true
+            }
+
+            override fun onPermissionRequest(request: android.webkit.PermissionRequest) {
+                val missing = request.resources.mapNotNull { resource ->
+                    when (resource) {
+                        android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE -> android.Manifest.permission.CAMERA
+                        android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE -> android.Manifest.permission.RECORD_AUDIO
+                        else -> null
+                    }
+                }.filter { checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED }
+                if (missing.isEmpty()) {
+                    request.grant(request.resources)
+                    return
+                }
+                pendingPermission = request
+                requestPermissions(missing.toTypedArray(), REQ_MEDIA)
+            }
+
+            override fun onCreateWindow(
+                view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message,
+            ): Boolean {
+                // target=_blank and window.open land here: give the popup its own
+                // tab and hand that WebView back through the transport.
+                val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
+                newTab(null, blank = true)
+                transport.webView = web
+                resultMsg.sendToTarget()
+                return true
+            }
+
+            override fun onShowCustomView(
+                view: android.view.View, callback: android.webkit.WebChromeClient.CustomViewCallback,
+            ) {
+                if (fullscreen != null) {
+                    callback.onCustomViewHidden()
+                    return
+                }
+                val frame = android.widget.FrameLayout(this@MainActivity).apply {
+                    setBackgroundColor(Color.BLACK)
+                    tag = callback
+                }
+                frame.addView(
+                    view,
+                    android.widget.FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    ),
+                )
+                fullscreen = frame
+                addContentView(
+                    frame,
+                    ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
+                )
+            }
+
+            override fun onHideCustomView() {
+                val frame = fullscreen ?: return
+                (frame.parent as? ViewGroup)?.removeView(frame)
+                fullscreen = null
+                (frame.tag as? android.webkit.WebChromeClient.CustomViewCallback)?.onCustomViewHidden()
+            }
+
+            override fun onShowFileChooser(
+                wv: WebView,
+                callback: android.webkit.ValueCallback<Array<android.net.Uri>>,
+                params: android.webkit.WebChromeClient.FileChooserParams,
+            ): Boolean {
+                // Without this the <input type="file"> tap does nothing at all.
+                pendingFiles?.onReceiveValue(null)
+                pendingFiles = callback
+                return runCatching {
+                    startActivityForResult(params.createIntent(), REQ_FILE_CHOOSER)
+                    true
+                }.getOrElse {
+                    pendingFiles = null
+                    callback.onReceiveValue(null)
+                    false
+                }
+            }
+
             override fun onReceivedTitle(wv: WebView, title: String) {
                 tabs.getOrNull(active)?.title = title
             }
@@ -309,6 +434,22 @@ class MainActivity : Activity() {
 
             override fun onPageFinished(wv: WebView, url: String) {
                 progress.visibility = android.view.View.GONE
+            }
+
+            override fun onReceivedError(
+                wv: WebView, request: android.webkit.WebResourceRequest, error: android.webkit.WebResourceError,
+            ) {
+                if (!request.isForMainFrame) return
+                val html = """
+                    <html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+                    <style>body{font:16px -apple-system,sans-serif;padding:32px;color:#333}
+                    code{background:#f2f2f2;padding:2px 6px;border-radius:4px}</style></head>
+                    <body><h3>打不开这个页面</h3>
+                    <p>${request.url}</p>
+                    <p>${error.description}（${error.errorCode}）</p>
+                    <p>可以检查网络，或到设置里确认内核正在运行。</p></body></html>
+                """.trimIndent()
+                wv.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
             }
 
             override fun onReceivedSslError(
@@ -394,6 +535,52 @@ class MainActivity : Activity() {
         }
     }
 
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (tabs.isNotEmpty() && web.canGoBack()) {
+            web.goBack()
+            return
+        }
+        if (tabs.size > 1) {
+            closeTab(active)
+            return
+        }
+        super.onBackPressed()
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQ_MEDIA) return
+        val request = pendingPermission ?: return
+        pendingPermission = null
+        if (grantResults.isNotEmpty() && grantResults.all { it == android.content.pm.PackageManager.PERMISSION_GRANTED }) {
+            request.grant(request.resources)
+        } else {
+            request.deny()
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
+        if (requestCode != REQ_FILE_CHOOSER) {
+            super.onActivityResult(requestCode, resultCode, data)
+            return
+        }
+        val callback = pendingFiles ?: return
+        pendingFiles = null
+        val picked: Array<android.net.Uri>? = when {
+            resultCode != RESULT_OK || data == null -> null
+            data.clipData != null -> {
+                val clip = data.clipData!!
+                Array(clip.itemCount) { clip.getItemAt(it).uri }
+            }
+            data.data != null -> arrayOf(data.data!!)
+            else -> null
+        }
+        callback.onReceiveValue(picked)
+    }
+
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -469,12 +656,16 @@ class MainActivity : Activity() {
         private val CHROME_MUTED = Color.parseColor("#8A8A8A")
 
         private const val KEY_LAST_URL = "lastUrl"
+        private const val REQ_FILE_CHOOSER = 4711
+        private const val REQ_MEDIA = 4712
         private const val KEY_AUTO_START = "autoStart"
 
         const val DEFAULT_PORT = KernelRuntime.DEFAULT_PORT
         const val DEFAULT_HOST = "127.0.0.1"
     }
 }
+
+
 
 
 
