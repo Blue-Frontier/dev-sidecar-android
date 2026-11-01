@@ -625,8 +625,29 @@ class KernelSettingsActivity : Activity() {
         return lines.joinToString("\n")
     }
 
-    private fun fmtVersion(v: Long): String =
-        if (v <= 0) "（未声明）" else SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(v))
+    /**
+     * The official configuration writes its version as yyyyMMddHHmm in GMT+8
+     * ("格式是GMT+8的开始编辑时间"), not as an epoch timestamp. Formatting the
+     * number as a timestamp turned 202611011034 into 1976-06-03.
+     */
+    private fun fmtVersion(v: Long): String {
+        if (v <= 0) return "（未声明）"
+        val text = v.toString()
+        if (text.length in 10..12) {
+            val parsed = runCatching {
+                stampFormat().parse(text.padEnd(12, '0'))
+            }.getOrNull()
+            if (parsed != null) return stampFormat().format(parsed)
+        }
+        return SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).apply {
+            timeZone = java.util.TimeZone.getTimeZone("GMT+8")
+        }.format(Date(v))
+    }
+
+    private fun stampFormat(): SimpleDateFormat =
+        SimpleDateFormat("yyyyMMddHHmm", Locale.US).apply {
+            timeZone = java.util.TimeZone.getTimeZone("GMT+8")
+        }
 
     private fun renderStats(): String {
         val j = runCatching { JSONObject(KernelRuntime.traffic()) }.getOrNull() ?: return "（不可用）"
@@ -767,6 +788,7 @@ class KernelSettingsActivity : Activity() {
         private val ACCENT = Color.parseColor("#2FD8A6")
     }
 }
+
 
 
 
