@@ -209,6 +209,9 @@ class KernelSettingsActivity : Activity() {
             hint = "https://…/remote_config_personal.json5"
             setText(KernelRuntime.savedPersonalUrl(this@KernelSettingsActivity))
             setTextColor(TEXT)
+            // Light theme default hint colour is near black, invisible on the
+            // dark card: the field looked empty but the placeholder was there.
+            setHintTextColor(MUTED)
             textSize = 12f
             isSingleLine = true
             setRawInputType(InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
@@ -738,6 +741,7 @@ class KernelSettingsActivity : Activity() {
         private val ACCENT = Color.parseColor("#2FD8A6")
     }
 }
+
 
 
 

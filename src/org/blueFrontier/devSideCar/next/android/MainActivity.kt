@@ -88,9 +88,9 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
             setPadding(dp(6), dp(4), dp(6), dp(4))
-            addView(navButton("🕘", "历史记录") { showHistory() })
-            addView(navButton("⟳", "刷新") { if (tabs.isNotEmpty()) web.reload() })
-            addView(navButton("⌂", "主页") { goHome() })
+            addView(navButton("ic_history", "历史记录") { showHistory() })
+            addView(navButton("ic_refresh", "刷新") { if (tabs.isNotEmpty()) web.reload() })
+            addView(navButton("ic_home", "主页") { goHome() })
             addView(
                 urlField,
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
@@ -98,8 +98,8 @@ class MainActivity : Activity() {
                     marginEnd = dp(8)
                 },
             )
-            addView(navButton("▣", "标签页") { showTabs() })
-            addView(navButton("⚙", "设置") {
+            addView(navButton("ic_tabs", "标签页") { showTabs() })
+            addView(navButton("ic_settings", "设置") {
                 startActivity(android.content.Intent(this@MainActivity, KernelSettingsActivity::class.java))
             })
         }
@@ -399,18 +399,20 @@ class MainActivity : Activity() {
         return InetSocketAddress(host, port)
     }
 
-    /** Evenly sized buttons for the navigation row. */
-    private fun navButton(label: String, description: String, onClick: () -> Unit): Button =
-        Button(this).apply {
-            text = label
+    /**
+     * Evenly sized icon buttons for the navigation row. The drawable is looked
+     * up by name because this build does not generate an R class.
+     */
+    private fun navButton(icon: String, description: String, onClick: () -> Unit): android.widget.ImageButton =
+        android.widget.ImageButton(this).apply {
+            val id = resources.getIdentifier(icon, "drawable", packageName)
+            if (id != 0) setImageResource(id)
             contentDescription = description
-            textSize = 16f
-            minWidth = 0
-            minimumWidth = 0
-            setPadding(0, dp(4), 0, dp(4))
-            setTextColor(CHROME_TEXT)
+            scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+            imageTintList = android.content.res.ColorStateList.valueOf(CHROME_TEXT)
+            setPadding(dp(8), dp(8), dp(8), dp(8))
             backgroundTintList = android.content.res.ColorStateList.valueOf(CHROME_SURFACE)
-            layoutParams = LinearLayout.LayoutParams(dp(42), ViewGroup.LayoutParams.WRAP_CONTENT)
+            layoutParams = LinearLayout.LayoutParams(dp(42), dp(38))
             setOnClickListener { onClick() }
         }
 
@@ -452,6 +454,8 @@ class MainActivity : Activity() {
         const val DEFAULT_HOST = "127.0.0.1"
     }
 }
+
+
 
 
 
