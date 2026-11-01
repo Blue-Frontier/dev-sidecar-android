@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The kernel signs every intercepted site with its own CA. Adding it as an
+     application trust anchor lets the WebView validate those certificates
+     without installing anything system-wide. Everything else still goes through
+     the system store. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="@raw/kernel_ca" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
