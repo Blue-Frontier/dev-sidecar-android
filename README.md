@@ -9,13 +9,14 @@ dev-sidecar 的手机端：把 Go 版 MITM 内核（[ds-core-go](https://github.
 请求链路只有一条：
 
 ```
-WebView → shouldInterceptRequest
-        → HttpURLConnection（Proxy 指向 127.0.0.1:31191）
+WebView → 应用内 HTTP 代理（ProxyController 指向 127.0.0.1:31191）
         → 进程内 Go 内核（MITM、规则、测速、改写）
         → 上游
 ```
 
-- **没有 VPN**，不需要系统代理，也不需要安装证书。内核用自签 CA 给站点签临时证书，信任判断在应用内完成（`KernelTrust`：只放行 issuer 为 `dev-sidecar-core CA` 的链，其余仍走系统校验）。
+- **不用 VPN，也不是系统级代理**：`androidx.webkit` 的 `ProxyController` 只把本应用的 WebView 指向内核，其它应用不受影响，也没有授权弹窗。
+- **不用装证书**：内核的 CA 通过 `network_security_config` 作为应用自身的信任锚，WebView 直接认可；`onReceivedSslError` 里还按 issuer 放行一层兜底。
+- **POST/登录可用**：请求由 WebView 原生发出、整体经过内核，请求体不会被丢掉（早期那套逐请求拦截就是因为拿不到 body 才返回 501 的）。
 - **内核在进程内**：`libgojni.so` + gomobile 绑定，`KernelService` 用前台服务 + WakeLock 保活，应用退到后台时内核继续监听。
 - **拦截开关只管规则匹配**：`server.intercept.enabled=false`（安全模式）时不再匹配规则，预设 IP、DNS 回退、中继仍然工作。
 
@@ -85,10 +86,11 @@ git push origin v0.2.0
 kernel/                       内核 submodule（ds-core-go）
 assets/                       首次启动落到 files\ 的官方配置、CA 证书与私钥
 res/mipmap-*/                 应用图标
+res/xml/                      网络安全配置（把内核 CA 设为信任锚）
+res/raw/                      内核 CA（PEM）
+deps/                         AAR 依赖下载与解包（fetch-deps.ps1）
 src/org/blueFrontier/devSideCar/next/android/
-    MainActivity              工具栏 + WebView + 隐藏的 --es mode 入口
-    ProxyFetchWebViewClient   把每个 http(s) 请求经内核转发
-    KernelTrust               内核 CA 的应用内信任
+    MainActivity              工具栏 + WebView（代理指向内核）+ 隐藏的 --es mode 入口
     KernelRuntime             内核句柄、配置层级、规则与统计的封装
     KernelService             前台服务 + WakeLock
     KernelSettingsActivity    运行状态、模式、三层配置、端口、日志
@@ -96,7 +98,9 @@ src/org/blueFrontier/devSideCar/next/android/
     TrafficActivity           按域名统计流量
     GithubStatusActivity      经内核逐个探测 GitHub 端点
     HelpActivity              帮助
+    LogProvider               把 kernel.log 交给系统分享
     BrowserPrefs              主页设置
+    KernelTrust               内核 CA 的信任链（供探测类请求使用）
 AndroidManifest.xml
 build.ps1 / sync-kernel.ps1
 dist/                         归档的签名 APK
@@ -133,14 +137,7 @@ dist/                         归档的签名 APK
 
 ## 已知限制
 
-- `shouldInterceptRequest` 不暴露请求体，因此非 GET/HEAD 请求返回 501；页面里的 POST/XHR 会失败。
 - minSdk 29（内核依赖的 TLS 行为与 29 对齐）。发布时按架构拆成两个包：`DS-NEXT-<版本>-arm64.apk`（约 7.6 MB）和 `DS-NEXT-<版本>-x86_64.apk`（约 8.3 MB），装错了系统会直接拒绝。本地要单个架构就用 `-Target android/arm64` 或 `android/amd64` 构建内核。
-- 桌面端用于代理其它应用的场景在手机端未实现：本应用只转发自己的 WebView。
-
-
-
-
-
-
+- 桌面端"给其它应用当代理"的场景在手机端未实现：代理只作用于本应用的 WebView。
 
 
