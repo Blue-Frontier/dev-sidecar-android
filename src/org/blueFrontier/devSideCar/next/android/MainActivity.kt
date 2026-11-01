@@ -37,6 +37,8 @@ class MainActivity : Activity() {
          */
         val history = mutableListOf<String>()
         var cursor = -1
+        /** False for a restored tab that has not been shown yet. */
+        var loaded = false
     }
 
     private val tabs = mutableListOf<Tab>()
@@ -53,6 +55,7 @@ class MainActivity : Activity() {
     private var pendingFiles: android.webkit.ValueCallback<Array<android.net.Uri>>? = null
     /** Camera/microphone request waiting for the runtime permission answer. */
     private var pendingPermission: android.webkit.PermissionRequest? = null
+    private var desktopMode = false
     /** Fullscreen video container, stacked on top of the content view. */
     private var fullscreen: android.widget.FrameLayout? = null
     private val kernelPrefs by lazy { getSharedPreferences("ds-kernel", MODE_PRIVATE) }
@@ -106,9 +109,7 @@ class MainActivity : Activity() {
                 },
             )
             addView(navButton("ic_tabs", "标签页") { showTabs() })
-            addView(navButton("ic_settings", "设置") {
-                startActivity(android.content.Intent(this@MainActivity, KernelSettingsActivity::class.java))
-            })
+            addView(navButton("ic_settings", "更多") { showMenu() })
         }
 
         progress = android.widget.ProgressBar(
@@ -171,14 +172,20 @@ class MainActivity : Activity() {
         val initial = startUrl ?: BrowserPrefs.home(this)
         urlField.setText(initial)
         // The override is asynchronous; navigate only once it is in place.
-        applyProxy { newTab(initial) }
+        applyProxy { if (!restoreTabs()) newTab(initial) }
     }
 
     // ---------------------------------------------------------------- tabs
 
-    private fun newTab(url: String?, blank: Boolean = false) {
+    private fun newTab(url: String?, blank: Boolean = false, load: Boolean = true) {
         val target = url ?: if (blank) "about:blank" else BrowserPrefs.home(this)
         tabs.add(Tab(target))
+        if (!load) {
+            active = tabs.size - 1
+            tabs[active].loaded = false
+            urlField.setText(target)
+            return
+        }
         switchTab(tabs.size - 1, force = true)
     }
 
@@ -189,7 +196,10 @@ class MainActivity : Activity() {
         val tab = tabs[index]
         urlField.setText(tab.url)
         progress.visibility = android.view.View.GONE
-        web.loadUrl(tab.url)
+        if (!tab.loaded) {
+            tab.loaded = true
+            web.loadUrl(tab.url)
+        }
         web.requestFocus()
     }
 
@@ -423,6 +433,7 @@ class MainActivity : Activity() {
             override fun doUpdateVisitedHistory(wv: WebView, url: String, isReload: Boolean) {
                 tabs.getOrNull(active)?.let {
                     it.url = url
+                    it.loaded = true
                     record(it, url)
                 }
                 if (!urlField.hasFocus()) urlField.setText(url)
@@ -593,7 +604,11 @@ class MainActivity : Activity() {
             prefs.edit()
                 .putString(KEY_LAST_URL, web.url ?: urlField.text.toString())
                 .apply()
+            tabs.getOrNull(active)?.let {
+                BrowserData.addHistory(this, it.url, it.title)
+            }
         }
+        saveTabs()
         // Cookie writes are asynchronous; without this a freshly issued login
         // cookie can be lost if the process is killed soon after.
         CookieManager.getInstance().flush()
@@ -636,8 +651,179 @@ class MainActivity : Activity() {
         // Enter used to leave the keyboard covering the page, which read as
         // "nothing happened". Dismiss it and hand focus back to the WebView.
         hideKeyboard()
-        val target = if (raw.contains("://") || raw.startsWith("about:")) raw else "https://$raw"
+        val target = if (raw.contains("://") || raw.startsWith("about:")) {
+            raw
+        } else if (looksLikeHost(raw)) {
+            "https://$raw"
+        } else {
+            searchUrl(raw)
+        }
         if (tabs.isEmpty()) newTab(target) else web.loadUrl(target)
+    }
+
+    /** A bare word with no dot is a search, not a host. */
+    private fun looksLikeHost(text: String): Boolean {
+        if (text.contains(' ') || text.contains('　')) return false
+        val host = text.substringBefore('/')
+        return host.contains('.') && !host.startsWith('.') && !host.endsWith('.')
+    }
+
+    private fun searchUrl(query: String): String =
+        "https://duckduckgo.com/?q=" + java.net.URLEncoder.encode(query, "UTF-8")
+
+    // ---------------------------------------------------------------- menu
+
+    private fun showMenu() {
+        val items = arrayOf(
+            "设置", "分享本页", "页内查找", "书签", "历史记录",
+            "请求桌面版", "清除浏览数据", "下载管理",
+        )
+        android.app.AlertDialog.Builder(this)
+            .setTitle("更多")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> startActivity(android.content.Intent(this, KernelSettingsActivity::class.java))
+                    1 -> sharePage()
+                    2 -> findInPage()
+                    3 -> showBookmarks()
+                    4 -> showHistoryAll()
+                    5 -> toggleDesktopMode()
+                    6 -> clearBrowsingData()
+                    7 -> startActivity(android.content.Intent(this, DownloadsActivity::class.java))
+                }
+            }
+            .show()
+    }
+
+    private fun sharePage() {
+        val url = web.url ?: urlField.text.toString()
+        if (url.isBlank()) return
+        startActivity(
+            android.content.Intent(android.content.Intent.ACTION_SEND)
+                .setType("text/plain")
+                .putExtra(android.content.Intent.EXTRA_TEXT, url),
+        )
+    }
+
+    private fun findInPage() {
+        val input = android.widget.EditText(this).apply { hint = "在页面中查找" }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("页内查找")
+            .setView(input)
+            .setPositiveButton("查找") { _, _ ->
+                val query = input.text.toString()
+                if (query.isNotBlank()) web.findAllAsync(query)
+            }
+            .setNeutralButton("下一个") { _, _ -> web.findNext(true) }
+            .setNegativeButton("关闭") { _, _ -> web.clearMatches() }
+            .show()
+    }
+
+    private fun toggleDesktopMode() {
+        desktopMode = !desktopMode
+        web.settings.userAgentString = if (desktopMode) DESKTOP_UA else mobileUserAgent()
+        web.settings.useWideViewPort = desktopMode
+        web.loadUrl(web.url ?: urlField.text.toString())
+        toast(if (desktopMode) "已请求桌面版" else "已切回移动版")
+    }
+
+    private fun showBookmarks() {
+        val entries = BrowserData.bookmarks(this)
+        if (entries.isEmpty()) {
+            toast("还没有书签，长按「更多」菜单里的书签可以添加当前页面")
+            return
+        }
+        val labels = entries.map { (it.title.ifBlank { it.url }) }.toTypedArray()
+        android.app.AlertDialog.Builder(this)
+            .setTitle("书签")
+            .setItems(labels) { _, which -> openUrl(entries[which].url) }
+            .setPositiveButton("收藏本页") { _, _ ->
+                val url = web.url ?: return@setPositiveButton
+                val mine = tabs.getOrNull(active)?.title ?: url
+                val added = BrowserData.toggleBookmark(this, url, mine)
+                toast(if (added) "已加入书签" else "已取消收藏")
+            }
+            .setNeutralButton("取消") { _, _ -> }
+            .show()
+    }
+
+    private fun showHistoryAll() {
+        val entries = BrowserData.history(this)
+        if (entries.isEmpty()) {
+            toast("还没有历史记录")
+            return
+        }
+        val labels = entries.map { (it.title.ifBlank { it.url }) }.toTypedArray()
+        android.app.AlertDialog.Builder(this)
+            .setTitle("历史记录")
+            .setItems(labels) { _, which -> openUrl(entries[which].url) }
+            .setNegativeButton("关闭") { _, _ -> }
+            .setPositiveButton("清空") { _, _ ->
+                BrowserData.clearHistory(this)
+                toast("历史已清空")
+            }
+            .show()
+    }
+
+    private fun clearBrowsingData() {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("清除浏览数据")
+            .setMessage("会清除 Cookie、缓存、表单数据和历史记录，书签保留。登录状态会丢失。")
+            .setPositiveButton("清除") { _, _ ->
+                CookieManager.getInstance().removeAllCookies(null)
+                CookieManager.getInstance().flush()
+                web.clearCache(true)
+                web.clearHistory()
+                web.clearFormData()
+                BrowserData.clearHistory(this)
+                toast("已清除")
+            }
+            .setNegativeButton("取消") { _, _ -> }
+            .show()
+    }
+
+    private fun openUrl(url: String) {
+        if (tabs.isEmpty()) newTab(url) else {
+            tabs[active].url = url
+            tabs[active].loaded = true
+            web.loadUrl(url)
+        }
+    }
+
+    private fun mobileUserAgent(): String =
+        "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+
+    // ------------------------------------------------------------ tab state
+
+    /** Tabs survive a process death; only the visible one has been rendered. */
+    private fun saveTabs() {
+        if (tabs.isEmpty()) return
+        val array = org.json.JSONArray()
+        for (tab in tabs) {
+            array.put(org.json.JSONObject().put("url", tab.url).put("title", tab.title))
+        }
+        prefs.edit()
+            .putString(KEY_TABS, array.toString())
+            .putInt(KEY_TAB_INDEX, active)
+            .apply()
+    }
+
+    private fun restoreTabs(): Boolean {
+        val raw = prefs.getString(KEY_TABS, null) ?: return false
+        val array = runCatching { org.json.JSONArray(raw) }.getOrNull() ?: return false
+        if (array.length() == 0) return false
+        val urls = (0 until array.length()).mapNotNull {
+            array.optJSONObject(it)?.optString("url")?.takeIf { url -> url.isNotBlank() }
+        }
+        if (urls.isEmpty()) return false
+        urls.forEach { newTab(it, load = false) }
+        val index = prefs.getInt(KEY_TAB_INDEX, 0).coerceIn(0, urls.size - 1)
+        active = index
+        val tab = tabs[index]
+        urlField.setText(tab.url)
+        tab.loaded = true
+        web.loadUrl(tab.url)
+        return true
     }
 
     private fun dp(v: Int): Int = Math.round(v * resources.displayMetrics.density)
@@ -658,12 +844,18 @@ class MainActivity : Activity() {
         private const val KEY_LAST_URL = "lastUrl"
         private const val REQ_FILE_CHOOSER = 4711
         private const val REQ_MEDIA = 4712
+        private const val KEY_TABS = "tabs"
+        private const val KEY_TAB_INDEX = "tabIndex"
+        private const val DESKTOP_UA =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         private const val KEY_AUTO_START = "autoStart"
 
         const val DEFAULT_PORT = KernelRuntime.DEFAULT_PORT
         const val DEFAULT_HOST = "127.0.0.1"
     }
 }
+
+
 
 
 
