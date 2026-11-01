@@ -295,6 +295,9 @@ class MainActivity : Activity() {
             .replace("; wv)", ")")
             .replace(Regex("""\s*Version/\S+"""), "")
 
+        settings.textZoom = BrowserPrefs.textZoom(this)
+        applyDarkMode(settings)
+
         view.webChromeClient = object : android.webkit.WebChromeClient() {
             override fun onProgressChanged(wv: WebView, newProgress: Int) {
 
@@ -790,6 +793,23 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Algorithmic darkening where the WebView supports it, legacy force-dark otherwise. */
+    private fun applyDarkMode(settings: WebSettings) {
+        val on = BrowserPrefs.darkMode(this)
+        when {
+            androidx.webkit.WebViewFeature.isFeatureSupported(
+                androidx.webkit.WebViewFeature.ALGORITHMIC_DARKENING,
+            ) -> androidx.webkit.WebSettingsCompat.setAlgorithmicDarkeningAllowed(settings, on)
+            androidx.webkit.WebViewFeature.isFeatureSupported(
+                androidx.webkit.WebViewFeature.FORCE_DARK,
+            ) -> androidx.webkit.WebSettingsCompat.setForceDark(
+                settings,
+                if (on) androidx.webkit.WebSettingsCompat.FORCE_DARK_ON
+                else androidx.webkit.WebSettingsCompat.FORCE_DARK_OFF,
+            )
+        }
+    }
+
     private fun mobileUserAgent(): String =
         "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
 
@@ -854,6 +874,8 @@ class MainActivity : Activity() {
         const val DEFAULT_HOST = "127.0.0.1"
     }
 }
+
+
 
 
 

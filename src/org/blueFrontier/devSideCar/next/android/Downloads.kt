@@ -181,6 +181,38 @@ object Downloads {
         task.state = State.DONE
         if (task.total <= 0) task.total = task.bytes
         changed()
+        notifyDone(context, task)
+    }
+
+    /** A finished download is only discoverable if the app says so. */
+    private fun notifyDone(context: Context, task: Task) {
+        val manager = context.getSystemService(android.app.NotificationManager::class.java) ?: return
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        val channel = "downloads"
+        if (manager.getNotificationChannel(channel) == null) {
+            manager.createNotificationChannel(
+                android.app.NotificationChannel(channel, "下载", android.app.NotificationManager.IMPORTANCE_LOW),
+            )
+        }
+        val open = android.app.PendingIntent.getActivity(
+            context, 0,
+            android.content.Intent(context, DownloadsActivity::class.java)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification = android.app.Notification.Builder(context, channel)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle("下载完成")
+            .setContentText(task.name)
+            .setContentIntent(open)
+            .setAutoCancel(true)
+            .build()
+        runCatching { manager.notify(task.name.hashCode(), notification) }
     }
 
     private fun fileName(url: String, disposition: String?): String {
@@ -196,4 +228,5 @@ object Downloads {
             .take(120)
     }
 }
+
 

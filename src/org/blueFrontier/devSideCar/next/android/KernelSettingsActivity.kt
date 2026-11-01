@@ -123,6 +123,46 @@ class KernelSettingsActivity : Activity() {
         })
         root.addView(downloadCard)
 
+        // 外观：字号与夜间模式，改完刷新当前页面生效
+        val lookCard = card("外观")
+        val zoomLabel = TextView(this).apply {
+            textSize = 12f
+            setTextColor(MUTED)
+            text = "字号：${BrowserPrefs.textZoom(this@KernelSettingsActivity)}%"
+        }
+        lookCard.addView(zoomLabel)
+        val zoomRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        zoomRow.addView(Button(this).apply {
+            text = "小一点"
+            setOnClickListener {
+                BrowserPrefs.setTextZoom(this@KernelSettingsActivity, BrowserPrefs.textZoom(this@KernelSettingsActivity) - 10)
+                zoomLabel.text = "字号：${BrowserPrefs.textZoom(this@KernelSettingsActivity)}%"
+            }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dpx(6) })
+        zoomRow.addView(Button(this).apply {
+            text = "大一点"
+            setOnClickListener {
+                BrowserPrefs.setTextZoom(this@KernelSettingsActivity, BrowserPrefs.textZoom(this@KernelSettingsActivity) + 10)
+                zoomLabel.text = "字号：${BrowserPrefs.textZoom(this@KernelSettingsActivity)}%"
+            }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        lookCard.addView(zoomRow)
+        val darkButton = Button(this).apply {
+            text = if (BrowserPrefs.darkMode(this@KernelSettingsActivity)) "夜间模式：开" else "夜间模式：关"
+            setOnClickListener {
+                val next = !BrowserPrefs.darkMode(this@KernelSettingsActivity)
+                BrowserPrefs.setDarkMode(this@KernelSettingsActivity, next)
+                text = if (next) "夜间模式：开" else "夜间模式：关"
+            }
+        }
+        lookCard.addView(darkButton)
+        lookCard.addView(TextView(this).apply {
+            text = "字号与夜间模式在页面重新加载后生效（内核设置里的重启不影响）"
+            textSize = 11f
+            setTextColor(MUTED)
+        })
+        root.addView(lookCard)
+
         // 模式
         val modeCard = card("模式")
         modeStatus = TextView(this).apply {
@@ -788,6 +828,7 @@ class KernelSettingsActivity : Activity() {
         private val ACCENT = Color.parseColor("#2FD8A6")
     }
 }
+
 
 
 
