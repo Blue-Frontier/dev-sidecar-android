@@ -26,4 +26,7 @@ _probe/
 # 内核 AAR 的派生产物，由 kernel/ 源码构建并 sync 出来
 libs/
 
+# AAR 依赖解出的 jar，由 deps/fetch-deps.ps1 生成
+deps/jars/
+deps/*.aar
 

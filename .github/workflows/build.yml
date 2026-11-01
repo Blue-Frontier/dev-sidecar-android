@@ -195,6 +195,13 @@ jobs:
           "artifact=$artifact" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
           Write-Host "versionName=$name artifact=$artifact"
 
+      - name: Fetch the plain-jar dependencies
+        shell: pwsh
+        run: |
+          # No Gradle: each AAR is unpacked to its classes.jar, which is all
+          # kotlinc and d8 need.
+          ./deps/fetch-deps.ps1
+
       - name: Build the kernel AAR
         working-directory: kernel
         shell: pwsh
@@ -227,6 +234,7 @@ jobs:
           path: release/*
           if-no-files-found: error
           retention-days: 30
+
 
 
 

@@ -32,6 +32,10 @@ if (-not (Test-Path $stdLib)) { throw "kotlin-stdlib.jar not found at $stdLib" }
 # synced by sync-kernel.ps1. It lives in the same APK as the browser now.
 $gomobileJar = Join-Path $root "libs\classes.jar"
 $gomobileClasses = Join-Path $root "libs\classes"
+# Plain jars extracted from AARs (deps/fetch-deps.ps1): the no-Gradle equivalent
+# of a Gradle dependency. They go on the kotlinc classpath and through d8.
+$depJars = @(Get-ChildItem (Join-Path $root 'deps\jars') -Filter '*.jar' -ErrorAction SilentlyContinue |
+    ForEach-Object { $_.FullName })
 $abiLibs = Get-ChildItem (Join-Path $root 'libs\lib') -Directory -ErrorAction SilentlyContinue |
     ForEach-Object { [pscustomobject]@{ Abi = $_.Name; So = (Join-Path $_.FullName 'libgojni.so') } } |
     Where-Object { Test-Path $_.So }
@@ -87,7 +91,7 @@ $sources = (Get-ChildItem "$root\src" -Recurse -Filter *.kt).FullName
 # kotlinc prints deprecation warnings on stderr, which "Stop" would turn fatal.
 $eap = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
-& $env:KOTLINC -classpath "`"$env:ANDROID_JAR;$gomobileClasses`"" $sources -d "$out\classes" 2>&1 |
+& $env:KOTLINC -classpath "`"$(@($env:ANDROID_JAR, $gomobileClasses) + $depJars -join ";")`"" $sources -d "$out\classes" 2>&1 |
     Where-Object { $_ -notmatch "^warning: unable to find kotlin-stdlib.*" } | Out-Host
 $ErrorActionPreference = $eap
 if ($LASTEXITCODE) { throw "kotlinc failed: exit $LASTEXITCODE" }
@@ -111,11 +115,18 @@ New-Item -ItemType Directory -Path "$out\dex\gomobile" | Out-Null
 if ($LASTEXITCODE) { throw "d8 (gomobile) failed" }
 Write-Host "[4b/7] d8 gomobile OK"
 
+if ($depJars) {
+    New-Item -ItemType Directory -Path "$out\dex\deps" | Out-Null
+    & "$env:BUILD_TOOLS\d8.bat" --lib $env:ANDROID_JAR --min-api 29 --output "$out\dex\deps" @depJars
+    if ($LASTEXITCODE) { throw "d8 (deps) failed" }
+    Write-Host "[4c/7] d8 deps OK"
+}
+
 # 5) merge dex + native kernel into the apk
 New-Item -ItemType Directory -Path "$out\finaldex" | Out-Null
 Copy-Item "$out\dex\app\classes.dex" "$out\finaldex\classes.dex"
 $next = 2
-foreach ($src in @("$out\dex\gomobile", "$out\dex\stdlib")) {
+foreach ($src in @("$out\dex\gomobile", "$out\dex\stdlib", "$out\dex\deps")) {
     foreach ($f in (Get-ChildItem $src -Filter *.dex | Sort-Object Name)) {
         Copy-Item $f.FullName "$out\finaldex\classes$next.dex"
         $next++
@@ -187,4 +198,5 @@ $sha = (Get-FileHash $archive -Algorithm SHA256).Hash
 Get-ChildItem $dist -Filter "ds-next-*.apk" | Sort-Object LastWriteTime -Descending |
     Select-Object -Skip 20 | ForEach-Object { Remove-Item $_.FullName -Force }
 Write-Host "[8/7] archived -> dist\ds-next-$stamp.apk"
+
 

@@ -29,6 +29,8 @@ git clone --recurse-submodules https://github.com/Blue-Frontier/dev-sidecar-andr
 git submodule update --init --recursive
 ```
 
+依赖只有一项：`androidx.webkit`（提供 `ProxyController`，让 WebView 把内核当 HTTP 代理用）。没有 Gradle，所以 `deps/fetch-deps.ps1` 把 AAR 下载下来、取出 `classes.jar`，`build.ps1` 再把它塞进 kotlinc 的 classpath 和 d8（输出第 4c 步）。`deps/jars/` 不入库，CI 在构建前会跑同一个脚本。
+
 构建脚本按这个顺序解析内核目录，第一个命中即用：
 
 1. `kernel/`（submodule）
@@ -128,6 +130,7 @@ dist/                         归档的签名 APK
 - `shouldInterceptRequest` 不暴露请求体，因此非 GET/HEAD 请求返回 501；页面里的 POST/XHR 会失败。
 - minSdk 29（内核依赖的 TLS 行为与 29 对齐）。发布时按架构拆成两个包：`DS-NEXT-<版本>-arm64.apk`（约 7.6 MB）和 `DS-NEXT-<版本>-x86_64.apk`（约 8.3 MB），装错了系统会直接拒绝。本地要单个架构就用 `-Target android/arm64` 或 `android/amd64` 构建内核。
 - 桌面端用于代理其它应用的场景在手机端未实现：本应用只转发自己的 WebView。
+
 
 
 

@@ -22,6 +22,7 @@ class MainActivity : Activity() {
     private lateinit var urlField: EditText
 
     private val prefs by lazy { getSharedPreferences("ds-app", MODE_PRIVATE) }
+    private val proxyExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
     private val kernelPrefs by lazy { getSharedPreferences("ds-kernel", MODE_PRIVATE) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -80,10 +81,25 @@ class MainActivity : Activity() {
         }
 
         web = WebView(this).apply {
-            webViewClient = ProxyFetchWebViewClient(
-                proxyAddr = { kernelAddr() },
-                onUrl = { url -> if (!urlField.hasFocus()) urlField.setText(url) },
-            )
+            // The whole WebView goes through the kernel as an HTTP proxy
+            // (applyProxy). Per-request interception cannot carry a POST body,
+            // which is what broke every login form.
+            webViewClient = object : android.webkit.WebViewClient() {
+                override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+                    if (!urlField.hasFocus()) urlField.setText(url)
+                }
+
+                override fun onReceivedSslError(
+                    view: WebView,
+                    handler: android.webkit.SslErrorHandler,
+                    error: android.net.http.SslError,
+                ) {
+                    // The kernel CA is an app trust anchor, so its chains
+                    // validate normally; this covers the rest.
+                    val issuer = error.certificate?.issuedBy?.cName ?: ""
+                    if (issuer.contains(KERNEL_CA_ISSUER)) handler.proceed() else handler.cancel()
+                }
+            }
         }
 
         val root = LinearLayout(this).apply {
@@ -145,7 +161,36 @@ class MainActivity : Activity() {
         val startUrl = intent.getStringExtra("url") ?: prefs.getString(KEY_LAST_URL, null)
         val initial = startUrl ?: BrowserPrefs.home(this)
         urlField.setText(initial)
-        web.loadUrl(initial)
+        // The override is asynchronous; navigate only once it is in place.
+        applyProxy { web.loadUrl(initial) }
+    }
+
+    /** Points the WebView at the in-process kernel. */
+    private fun applyProxy(then: () -> Unit) {
+        if (!androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.PROXY_OVERRIDE)) {
+            // Old WebView provider: fall back to loading without the kernel.
+            android.util.Log.w("ds-web", "PROXY_OVERRIDE unsupported by this WebView")
+            then()
+            return
+        }
+        val port = KernelRuntime.savedPort(this)
+        val config = androidx.webkit.ProxyConfig.Builder()
+            .addProxyRule("127.0.0.1:$port")
+            .build()
+        androidx.webkit.ProxyController.getInstance().setProxyOverride(
+            config,
+            proxyExecutor,
+        ) {
+            android.util.Log.i("ds-web", "webview proxy -> 127.0.0.1:$port")
+            runOnUiThread { then() }
+        }
+    }
+
+    override fun onDestroy() {
+        runCatching {
+            androidx.webkit.ProxyController.getInstance().clearProxyOverride(proxyExecutor) {}
+        }
+        super.onDestroy()
     }
 
     /**
@@ -236,6 +281,7 @@ class MainActivity : Activity() {
         const val DEFAULT_HOST = "127.0.0.1"
     }
 }
+
 
 
 
