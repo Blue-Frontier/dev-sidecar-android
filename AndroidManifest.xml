@@ -41,6 +41,11 @@
             android:exported="false"
             android:configChanges="orientation|screenSize|keyboardHidden" />
 
+    <activity
+        android:name=".DownloadsActivity"
+        android:exported="true"
+        android:configChanges="orientation|screenSize|keyboardHidden" />
+
         <activity
             android:name=".GithubStatusActivity"
             android:exported="false"
@@ -76,6 +81,9 @@
         </service>
     </application>
 </manifest>
+
+
+
 
 
 

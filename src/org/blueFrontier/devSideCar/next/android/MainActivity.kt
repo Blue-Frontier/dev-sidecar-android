@@ -326,77 +326,14 @@ class MainActivity : Activity() {
 
     // ------------------------------------------------------------- downloads
 
-    /**
-     * Fetches a download through the kernel. DownloadManager would bypass it
-     * (the app proxy only covers the WebView), so the transfer runs here with
-     * an explicit proxy and the same cookies the page had.
-     */
     private fun download(url: String, userAgent: String?, contentDisposition: String?, mimeType: String?) {
-        val addr = kernelAddr()
-        if (addr == null) {
-            toast("内核未运行，无法下载")
-            return
-        }
-        val name = fileName(url, contentDisposition)
-        toast("开始下载 $name")
-        Thread {
-            try {
-                val conn = java.net.URL(url).openConnection(java.net.Proxy(java.net.Proxy.Type.HTTP, addr)) as java.net.HttpURLConnection
-                conn.setRequestProperty("User-Agent", userAgent ?: web.settings.userAgentString)
-                CookieManager.getInstance().getCookie(url)?.let { conn.setRequestProperty("Cookie", it) }
-                conn.connectTimeout = 20_000
-                conn.readTimeout = 60_000
-                val type = conn.contentType?.substringBefore(';') ?: mimeType ?: "application/octet-stream"
-
-                val values = android.content.ContentValues().apply {
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-                    put(MediaStore.MediaColumns.MIME_TYPE, type)
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
-                    put(MediaStore.MediaColumns.IS_PENDING, 1)
-                }
-                val resolver = contentResolver
-                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                    ?: throw IllegalStateException("无法在下载目录创建文件")
-                conn.inputStream.use { input ->
-                    resolver.openOutputStream(uri)?.use { output -> input.copyTo(output) }
-                        ?: throw IllegalStateException("无法写入下载目录")
-                }
-                values.clear()
-                values.put(MediaStore.MediaColumns.IS_PENDING, 0)
-                resolver.update(uri, values, null, null)
-                runOnUiThread {
-                    toast("已保存到「下载」：$name")
-                    runCatching {
-                        startActivity(
-                            android.content.Intent(android.content.Intent.ACTION_VIEW)
-                                .setDataAndType(uri, type)
-                                .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION),
-                        )
-                    }
-                }
-            } catch (t: Throwable) {
-                runOnUiThread { toast("下载失败：${t.message ?: t.javaClass.simpleName}") }
-            }
-        }.start()
-    }
-
-    private fun fileName(url: String, contentDisposition: String?): String {
-        val header = contentDisposition ?: ""
-        val utf8 = Regex("""filename\*\s*=\s*UTF-8''([^;]+)""", RegexOption.IGNORE_CASE)
-            .find(header)?.groupValues?.get(1)
-        val plain = Regex("""filename\s*=\s*"?([^";]+)"?""", RegexOption.IGNORE_CASE)
-            .find(header)?.groupValues?.get(1)
-        val fromUrl = url.substringAfterLast('/').substringBefore('?').takeIf { it.isNotBlank() }
-        return (utf8 ?: plain ?: fromUrl ?: "download")
-            .let { java.net.URLDecoder.decode(it, "UTF-8") }
-            .replace(Regex("""[\\/:*?"<>|]"""), "_")
-            .take(120)
+        Downloads.start(this, url, userAgent ?: web.settings.userAgentString, contentDisposition, mimeType)
+        toast("已加入下载列表")
     }
 
     private fun toast(message: String) {
         android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show()
     }
-
     // -------------------------------------------------------------- plumbing
 
     /** Points the WebView at the in-process kernel. */
@@ -449,6 +386,11 @@ class MainActivity : Activity() {
         from.getStringExtra("url")?.takeIf { it.isNotBlank() }?.let {
             urlField.setText(it)
             if (tabs.isNotEmpty()) web.loadUrl(it)
+        }
+        // `am start --ez downloads true` opens the download list, which is the
+        // only way to drive a transfer from adb (the activity is not exported).
+        if (from.getBooleanExtra("downloads", false)) {
+            startActivity(android.content.Intent(this, DownloadsActivity::class.java))
         }
     }
 
@@ -533,6 +475,8 @@ class MainActivity : Activity() {
         const val DEFAULT_HOST = "127.0.0.1"
     }
 }
+
+
 
 
 
