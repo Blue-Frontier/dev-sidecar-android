@@ -62,6 +62,7 @@ class MainActivity : Activity() {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(6), dp(10), dp(6))
             addView(navButton("←") { if (web.canGoBack()) web.goBack() })
             addView(navButton("→") { if (web.canGoForward()) web.goForward() })
             addView(navButton("⟳") { web.reload() })
@@ -142,8 +143,11 @@ class MainActivity : Activity() {
             )
         }
         // edge-to-edge (targetSdk 35+): reserve space for the status/nav bars ourselves.
+        // Edge to edge: the page fills the screen width. Only the toolbar keeps
+        // a horizontal inset, otherwise the dark window colour frames the white
+        // page with a visible border on both sides.
         root.setOnApplyWindowInsetsListener { v, insets ->
-            v.setPadding(32, insets.systemWindowInsetTop + 32, 32, insets.systemWindowInsetBottom)
+            v.setPadding(0, insets.systemWindowInsetTop, 0, insets.systemWindowInsetBottom)
             insets
         }
         setContentView(root)
@@ -302,6 +306,8 @@ class MainActivity : Activity() {
         web.loadUrl(target)
     }
 
+    private fun dp(v: Int): Int = Math.round(v * resources.displayMetrics.density)
+
     private fun hideKeyboard() {
         val imm = getSystemService(android.view.inputmethod.InputMethodManager::class.java)
         imm?.hideSoftInputFromWindow(urlField.windowToken, 0)
@@ -322,6 +328,7 @@ class MainActivity : Activity() {
         const val DEFAULT_HOST = "127.0.0.1"
     }
 }
+
 
 
 
