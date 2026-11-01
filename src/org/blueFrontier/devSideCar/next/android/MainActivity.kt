@@ -23,6 +23,7 @@ class MainActivity : Activity() {
 
     private val prefs by lazy { getSharedPreferences("ds-app", MODE_PRIVATE) }
     private val proxyExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private lateinit var progress: android.widget.ProgressBar
     private val kernelPrefs by lazy { getSharedPreferences("ds-kernel", MODE_PRIVATE) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -80,6 +81,13 @@ class MainActivity : Activity() {
             })
         }
 
+        progress = android.widget.ProgressBar(
+            this, null, android.R.attr.progressBarStyleHorizontal,
+        ).apply {
+            isIndeterminate = true
+            visibility = android.view.View.GONE
+        }
+
         web = WebView(this).apply {
             // The whole WebView goes through the kernel as an HTTP proxy
             // (applyProxy). Per-request interception cannot carry a POST body,
@@ -87,6 +95,14 @@ class MainActivity : Activity() {
             webViewClient = object : android.webkit.WebViewClient() {
                 override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
                     if (!urlField.hasFocus()) urlField.setText(url)
+                }
+
+                override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                    this@MainActivity.progress.visibility = android.view.View.VISIBLE
+                }
+
+                override fun onPageFinished(view: WebView, url: String) {
+                    this@MainActivity.progress.visibility = android.view.View.GONE
                 }
 
                 override fun onReceivedSslError(
@@ -106,6 +122,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(CHROME_BG)
             addView(row)
+            addView(progress, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 6))
             addView(
                 web,
                 LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = 12 },
@@ -263,9 +280,20 @@ class MainActivity : Activity() {
     }
 
     private fun loadUrl() {
-        val url = urlField.text.toString().trim()
-        if (url.isEmpty()) return
-        web.loadUrl(if (url.contains("://")) url else "https://$url")
+        val raw = urlField.text.toString().trim()
+        if (raw.isEmpty()) return
+        // Enter used to leave the keyboard covering the page, which read as
+        // "nothing happened". Dismiss it and hand focus back to the WebView.
+        hideKeyboard()
+        val target = if (raw.contains("://") || raw.startsWith("about:")) raw else "https://$raw"
+        web.loadUrl(target)
+    }
+
+    private fun hideKeyboard() {
+        val imm = getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+        imm?.hideSoftInputFromWindow(urlField.windowToken, 0)
+        urlField.clearFocus()
+        web.requestFocus()
     }
 
     companion object {
@@ -281,6 +309,8 @@ class MainActivity : Activity() {
         const val DEFAULT_HOST = "127.0.0.1"
     }
 }
+
+
 
 
 
