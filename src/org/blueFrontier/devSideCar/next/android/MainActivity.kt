@@ -300,6 +300,10 @@ class MainActivity : Activity() {
             .replace("; wv)", ")")
             .replace(Regex("""\s*Version/\S+"""), "")
 
+        // Without this onCreateWindow is never called and window.open has no
+        // effect at all.
+        settings.setSupportMultipleWindows(true)
+        settings.javaScriptCanOpenWindowsAutomatically = true
         settings.textZoom = BrowserPrefs.textZoom(this)
         applyDarkMode(settings)
 
@@ -890,6 +894,7 @@ class MainActivity : Activity() {
         const val DEFAULT_HOST = "127.0.0.1"
     }
 }
+
 
 
 
