@@ -509,6 +509,14 @@ class MainActivity : Activity() {
     // ------------------------------------------------------------- downloads
 
     private fun download(url: String, userAgent: String?, contentDisposition: String?, mimeType: String?) {
+        // Without the runtime grant the completion notification is skipped, and
+        // asking here is the only moment where the reason is obvious.
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
+        }
         Downloads.start(this, url, userAgent ?: web.settings.userAgentString, contentDisposition, mimeType)
         toast("已加入下载列表")
     }
@@ -909,6 +917,7 @@ class MainActivity : Activity() {
         private const val KEY_LAST_URL = "lastUrl"
         private const val REQ_FILE_CHOOSER = 4711
         private const val REQ_MEDIA = 4712
+        private const val REQ_NOTIFY = 4713
         private const val KEY_TABS = "tabs"
         private const val KEY_TAB_INDEX = "tabIndex"
         private const val DESKTOP_UA =
@@ -919,6 +928,8 @@ class MainActivity : Activity() {
         const val DEFAULT_HOST = "127.0.0.1"
     }
 }
+
+
 
 
 
