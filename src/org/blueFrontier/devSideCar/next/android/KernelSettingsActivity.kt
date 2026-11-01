@@ -26,6 +26,7 @@ import java.util.Locale
 class KernelSettingsActivity : Activity() {
 
     private lateinit var statusLine: TextView
+    private lateinit var downloadStatus: TextView
     private lateinit var statusDetail: TextView
     private lateinit var summaryBox: TextView
     private lateinit var configSource: TextView
@@ -105,6 +106,22 @@ class KernelSettingsActivity : Activity() {
         statusCard.addView(statusDetail)
         statusCard.addView(buildActions())
         root.addView(statusCard)
+
+        // 下载：紧跟在运行状态后面，别埋进流量统计里
+        val downloadCard = card("下载")
+        downloadStatus = TextView(this).apply {
+            textSize = 12f
+            setTextColor(MUTED)
+            text = "暂无下载任务"
+        }
+        downloadCard.addView(downloadStatus)
+        downloadCard.addView(Button(this).apply {
+            text = "下载管理"
+            setOnClickListener {
+                startActivity(android.content.Intent(this@KernelSettingsActivity, DownloadsActivity::class.java))
+            }
+        })
+        root.addView(downloadCard)
 
         // 模式
         val modeCard = card("模式")
@@ -558,6 +575,15 @@ class KernelSettingsActivity : Activity() {
             personalStatus.text = if (hasPersonal) "当前已启用个人配置" else "当前未启用个人配置"
         }
         statsBox.text = renderStats()
+        val tasks = Downloads.tasks
+        downloadStatus.text = when {
+            tasks.isEmpty() -> "暂无下载任务"
+            else -> {
+                val running = tasks.count { it.state == Downloads.State.RUNNING }
+                val done = tasks.count { it.state == Downloads.State.DONE }
+                "共 ${tasks.size} 个任务 · 进行中 $running · 已完成 $done"
+            }
+        }
         logBox.text = renderLog()
     }
 
@@ -741,6 +767,7 @@ class KernelSettingsActivity : Activity() {
         private val ACCENT = Color.parseColor("#2FD8A6")
     }
 }
+
 
 
 
