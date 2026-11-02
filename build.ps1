@@ -6,7 +6,10 @@
 #         CI environment must provide JAVA_HOME, ANDROID_JAR, BUILD_TOOLS and
 #         KOTLINC (see .github/workflows/build.yml).
 [CmdletBinding()]
-param()
+param(
+    # Builds a debuggable APK (adb run-as works), for local diagnostics only.
+    [switch]$Debuggable
+)
 
 function Get-VersionCode([string]$name) {
     $parts = ($name -split '\.') | ForEach-Object { ($_ -replace '[^0-9].*$', '') }
@@ -93,8 +96,9 @@ if ($LASTEXITCODE) { throw "aapt2 compile failed" }
 $manifestText = Get-Content "$root\AndroidManifest.xml" -Raw
 $versionName = if ($manifestText -match 'android:versionName="([^"]+)"') { $Matches[1] } else { "0.0.0" }
 $versionCode = Get-VersionCode $versionName
+$debugFlag = if ($Debuggable) { "--debug-mode" } else { "" }
 & "$env:BUILD_TOOLS\aapt2.exe" link -I $env:ANDROID_JAR --manifest "$root\AndroidManifest.xml" `
-    --version-code $versionCode --version-name $versionName `
+    --version-code $versionCode --version-name $versionName $debugFlag `
     -A "$root\assets" -o "$out\base.apk" "$out\res.zip"
 if ($LASTEXITCODE) { throw "aapt2 link failed" }
 Write-Host "[1/7] aapt2 link OK"
@@ -212,6 +216,7 @@ $sha = (Get-FileHash $archive -Algorithm SHA256).Hash
 Get-ChildItem $dist -Filter "ds-next-*.apk" | Sort-Object LastWriteTime -Descending |
     Select-Object -Skip 20 | ForEach-Object { Remove-Item $_.FullName -Force }
 Write-Host "[8/7] archived -> dist\ds-next-$stamp.apk"
+
 
 
 

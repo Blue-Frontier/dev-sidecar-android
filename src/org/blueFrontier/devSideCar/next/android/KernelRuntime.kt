@@ -49,6 +49,7 @@ object KernelRuntime {
             copyAsset(ctx, "ca_ca.key", "ca/ca.key")
             val caDir = File(ctx.filesDir, "ca").absolutePath
             val logFile = File(ctx.filesDir, "kernel.log").absolutePath
+            runCatching { Mobile.setSystemDNS(systemDnsServers(ctx).joinToString(",")) }
             Mobile.touch()
             val json = Mobile.startKernel(config, addr, caDir, logFile)
             lastJson = json
@@ -61,6 +62,14 @@ object KernelRuntime {
             "error: ${e.message}"
         }
     }
+
+      /** DNS servers of the network the device is actually using. */
+      private fun systemDnsServers(ctx: Context): Array<String> {
+          val cm = ctx.getSystemService(android.net.ConnectivityManager::class.java) ?: return emptyArray()
+          val network = cm.activeNetwork ?: return emptyArray()
+          val props = cm.getLinkProperties(network) ?: return emptyArray()
+          return props.dnsServers.mapNotNull { it.hostAddress }.toTypedArray()
+      }
 
     @Synchronized
     fun stop() {
@@ -161,4 +170,7 @@ object KernelRuntime {
         return out.absolutePath
     }
 }
+
+
+
 
