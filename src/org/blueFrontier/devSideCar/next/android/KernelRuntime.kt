@@ -49,6 +49,11 @@ object KernelRuntime {
             copyAsset(ctx, "ca_ca.key", "ca/ca.key")
             val caDir = File(ctx.filesDir, "ca").absolutePath
             val logFile = File(ctx.filesDir, "kernel.log").absolutePath
+              // Pinned shared ECH config: fetching it live needs a resolver
+              // that publishes ECH parameters, which a blocked network cannot reach.
+              runCatching { ctx.assets.open("ech_shared.b64").bufferedReader().use { it.readText() } }
+                  .getOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+                  ?.let { b64 -> runCatching { Mobile.setSharedECH(b64) } }
             runCatching { Mobile.setSystemDNS(systemDnsServers(ctx).joinToString(",")) }
             Mobile.touch()
             val json = Mobile.startKernel(config, addr, caDir, logFile)
