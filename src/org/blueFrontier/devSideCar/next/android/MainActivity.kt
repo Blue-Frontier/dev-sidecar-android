@@ -194,14 +194,18 @@ class MainActivity : Activity() {
         switchTab(tabs.size - 1, force = true)
     }
 
-    private fun switchTab(index: Int, force: Boolean = false) {
+    private fun switchTab(index: Int, force: Boolean = false, reload: Boolean = false) {
         if (index !in tabs.indices) return
         if (index == active && !force) return
+        // Only the active tab holds the renderer, so the tab being left behind no
+        // longer describes what the WebView displays. Clearing its flag is what makes
+        // returning to it load its own address again.
+        tabs.getOrNull(active)?.let { if (it !== tabs[index]) it.loaded = false }
         active = index
         val tab = tabs[index]
         urlField.setText(tab.url)
         progress.visibility = android.view.View.GONE
-        if (!tab.loaded) {
+        if (reload || !tab.loaded) {
             tab.loaded = true
             web.loadUrl(tab.url)
         }
@@ -230,11 +234,12 @@ class MainActivity : Activity() {
             }
             index == active -> {
                 active = -1
-                switchTab(index.coerceAtMost(tabs.size - 1), force = true)
+                // The WebView still shows the page that just closed, so the tab that
+                // takes over has to be loaded even though it was loaded before.
+                switchTab(index.coerceAtMost(tabs.size - 1), force = true, reload = true)
             }
             index < active -> active -= 1
         }
-
     }
 
     private fun showTabs() {
@@ -315,13 +320,18 @@ class MainActivity : Activity() {
                     return rowView(rowTitle, rowUrl, isCurrent)
                 }
             }
-            setOnItemClickListener { _, _, position, _ -> onPick(position) }
         }
         val builder = android.app.AlertDialog.Builder(this).setTitle(title).setView(list)
         positive?.let { (label, action) -> builder.setPositiveButton(label) { _, _ -> action() } }
         neutral?.let { (label, action) -> builder.setNeutralButton(label) { _, _ -> action() } }
         negative?.let { (label, action) -> builder.setNegativeButton(label) { _, _ -> action() } }
         val dialog = builder.create()
+        // A custom list does not dismiss the dialog the way setItems does, so a
+        // pick would otherwise look like it did nothing.
+        list.setOnItemClickListener { _, _, position, _ ->
+            dialog.dismiss()
+            onPick(position)
+        }
         dialog.setOnShowListener {
             if (currentIndex in rows.indices) list.setSelection(currentIndex)
         }
@@ -1037,6 +1047,7 @@ class MainActivity : Activity() {
         const val DEFAULT_HOST = "127.0.0.1"
     }
 }
+
 
 
 
