@@ -238,48 +238,139 @@ class MainActivity : Activity() {
     }
 
     private fun showTabs() {
-        val labels = tabs.mapIndexed { index, tab ->
-            val title = tab.title.ifBlank { tab.url.substringAfter("://").ifBlank { "新标签页" } }
-            (if (index == active) "● " else "○ ") + title + "\n" + tab.url
-        }.toTypedArray()
-        android.app.AlertDialog.Builder(this)
-            .setTitle("标签页（${tabs.size}）")
-            .setItems(labels) { _, which -> switchTab(which) }
-            .setPositiveButton("新建") { _, _ -> newTab(BrowserPrefs.home(this)) }
-            .setNeutralButton("关闭当前") { _, _ -> if (active in tabs.indices) closeTab(active) }
-            .show()
+        val rows = tabs.mapIndexed { index, tab ->
+            Triple(
+                tab.title.ifBlank { tab.url.substringAfter("://").ifBlank { "新标签页" } },
+                tab.url,
+                index == active,
+            )
+        }
+        showRows(
+            "标签页（${tabs.size}）",
+            rows,
+            active,
+            { switchTab(it) },
+            positive = "新建" to { newTab(BrowserPrefs.home(this)) },
+            neutral = "关闭当前" to { if (active in tabs.indices) closeTab(active) },
+        )
     }
 
     /** This tab's own history, so back and forward share one button. */
     private fun showHistory() {
         val tab = tabs.getOrNull(active) ?: return
         if (tab.history.isEmpty()) return
-        val labels = tab.history.mapIndexed { i, url ->
-            (if (i == tab.cursor) "● " else "○ ") + url
-        }.toTypedArray()
-        android.app.AlertDialog.Builder(this)
-            .setTitle("历史记录")
-            .setItems(labels) { _, which ->
+        val rows = tab.history.mapIndexed { i, url -> Triple(url, url, i == tab.cursor) }
+        showRows(
+            "历史记录",
+            rows,
+            tab.cursor,
+            { which ->
                 tab.cursor = which
                 tab.url = tab.history[which]
                 web.loadUrl(tab.url)
-            }
-            .setNeutralButton("后退") { _, _ ->
-                if (tab.cursor > 0) {
-                    tab.cursor -= 1
-                    tab.url = tab.history[tab.cursor]
-                    web.loadUrl(tab.url)
-                }
-            }
-            .setPositiveButton("前进") { _, _ ->
+            },
+            positive = "前进" to {
                 if (tab.cursor + 1 < tab.history.size) {
                     tab.cursor += 1
                     tab.url = tab.history[tab.cursor]
                     web.loadUrl(tab.url)
                 }
-            }
-            .show()
+            },
+            neutral = "后退" to {
+                if (tab.cursor > 0) {
+                    tab.cursor -= 1
+                    tab.url = tab.history[tab.cursor]
+                    web.loadUrl(tab.url)
+                }
+            },
+        )
     }
+
+    /**
+     * A list where each entry is a title over its address, both capped at two lines so a
+     * long URL cannot push the rest of the list off screen. It opens on [currentIndex],
+     * which is the entry the user came to find.
+     */
+    private fun showRows(
+        title: String,
+        rows: List<Triple<String, String, Boolean>>,
+        currentIndex: Int,
+        onPick: (Int) -> Unit,
+        positive: Pair<String, () -> Unit>? = null,
+        neutral: Pair<String, () -> Unit>? = null,
+        negative: Pair<String, () -> Unit>? = null,
+    ) {
+        val list = android.widget.ListView(this).apply {
+            divider = null
+            adapter = object : android.widget.BaseAdapter() {
+                override fun getCount(): Int = rows.size
+                override fun getItem(position: Int): Any = rows[position]
+                override fun getItemId(position: Int): Long = position.toLong()
+                override fun getView(
+                    position: Int,
+                    convertView: android.view.View?,
+                    parent: android.view.ViewGroup?,
+                ): android.view.View {
+                    val (rowTitle, rowUrl, isCurrent) = rows[position]
+                    return rowView(rowTitle, rowUrl, isCurrent)
+                }
+            }
+            setOnItemClickListener { _, _, position, _ -> onPick(position) }
+        }
+        val builder = android.app.AlertDialog.Builder(this).setTitle(title).setView(list)
+        positive?.let { (label, action) -> builder.setPositiveButton(label) { _, _ -> action() } }
+        neutral?.let { (label, action) -> builder.setNeutralButton(label) { _, _ -> action() } }
+        negative?.let { (label, action) -> builder.setNegativeButton(label) { _, _ -> action() } }
+        val dialog = builder.create()
+        dialog.setOnShowListener {
+            if (currentIndex in rows.indices) list.setSelection(currentIndex)
+        }
+        dialog.show()
+    }
+
+    private fun rowView(title: String, url: String, current: Boolean): android.view.View {
+        // The dialog follows the activity theme rather than the dark chrome the rest
+        // of the browser uses, so the colours have to come from the theme.
+        val styled = obtainStyledAttributes(
+            intArrayOf(
+                android.R.attr.textColorPrimary,
+                android.R.attr.textColorSecondary,
+                android.R.attr.colorAccent,
+            ),
+        )
+        val primary = styled.getColorStateList(0)
+        val secondary = styled.getColorStateList(1)
+        val accent = styled.getColorStateList(2)
+        styled.recycle()
+
+        val box = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(dpx(20), dpx(10), dpx(20), dpx(10))
+        }
+        box.addView(
+            android.widget.TextView(this).apply {
+                text = (if (current) "● " else "") + title
+                textSize = 15f
+                maxLines = 2
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                setTextColor(if (current && accent != null) accent else primary)
+            },
+        )
+        if (url.isNotBlank() && url != title) {
+            box.addView(
+                android.widget.TextView(this).apply {
+                    text = url
+                    textSize = 12f
+                    maxLines = 2
+                    ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+                    setTextColor(secondary)
+                },
+            )
+        }
+        return box
+    }
+
+    private fun dpx(v: Int): Int = Math.round(v * resources.displayMetrics.density)
 
     // -------------------------------------------------------------- webview
 
@@ -820,16 +911,22 @@ class MainActivity : Activity() {
             toast("还没有历史记录")
             return
         }
-        val labels = entries.map { (it.title.ifBlank { it.url }) }.toTypedArray()
-        android.app.AlertDialog.Builder(this)
-            .setTitle("历史记录")
-            .setItems(labels) { _, which -> openUrl(entries[which].url) }
-            .setNegativeButton("关闭") { _, _ -> }
-            .setPositiveButton("清空") { _, _ ->
+        val currentUrl = tabs.getOrNull(active)?.url
+        val current = entries.indexOfFirst { it.url == currentUrl }
+        val rows = entries.mapIndexed { i, entry ->
+            Triple(entry.title.ifBlank { entry.url }, entry.url, i == current)
+        }
+        showRows(
+            "历史记录",
+            rows,
+            current,
+            { openUrl(entries[it].url) },
+            positive = "清空" to {
                 BrowserData.clearHistory(this)
                 toast("历史已清空")
-            }
-            .show()
+            },
+            negative = "关闭" to {},
+        )
     }
 
     private fun clearBrowsingData() {
@@ -924,6 +1021,7 @@ class MainActivity : Activity() {
         private val CHROME_SURFACE = Color.parseColor("#1B1F26")
         private val CHROME_TEXT = Color.parseColor("#E6E6E6")
         private val CHROME_MUTED = Color.parseColor("#8A8A8A")
+        private val CHROME_ACCENT = Color.parseColor("#4C8DFF")
 
         private const val KEY_LAST_URL = "lastUrl"
         private const val REQ_FILE_CHOOSER = 4711
@@ -939,6 +1037,8 @@ class MainActivity : Activity() {
         const val DEFAULT_HOST = "127.0.0.1"
     }
 }
+
+
 
 
 
