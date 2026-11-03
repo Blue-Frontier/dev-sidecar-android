@@ -96,11 +96,21 @@ if ($LASTEXITCODE) { throw "aapt2 compile failed" }
 $manifestText = Get-Content "$root\AndroidManifest.xml" -Raw
 $versionName = if ($manifestText -match 'android:versionName="([^"]+)"') { $Matches[1] } else { "0.0.0" }
 $versionCode = Get-VersionCode $versionName
-$debugFlag = if ($Debuggable) { "--debug-mode" } else { "" }
-& "$env:BUILD_TOOLS\aapt2.exe" link -I $env:ANDROID_JAR --manifest "$root\AndroidManifest.xml" `
-    --version-code $versionCode --version-name $versionName $debugFlag `
-    -A "$root\assets" -o "$out\base.apk" "$out\res.zip"
-if ($LASTEXITCODE) { throw "aapt2 link failed" }
+  # aapt2 treats an empty argument as an input file, so the switch is only added
+  # to the argument list when it is actually requested.
+  $linkArgs = @(
+      "link"
+      "-I", $env:ANDROID_JAR
+      "--manifest", "$root\AndroidManifest.xml"
+      "--version-code", "$versionCode"
+      "--version-name", $versionName
+      "-A", "$root\assets"
+      "-o", "$out\base.apk"
+      "$out\res.zip"
+  )
+  if ($Debuggable) { $linkArgs += "--debug-mode" }
+  & "$env:BUILD_TOOLS\aapt2.exe" @linkArgs
+  if ($LASTEXITCODE) { throw "aapt2 link failed" }
 Write-Host "[1/7] aapt2 link OK"
 
 # 2) kotlinc: compile all sources against android.jar + gomobile classes.
@@ -216,6 +226,7 @@ $sha = (Get-FileHash $archive -Algorithm SHA256).Hash
 Get-ChildItem $dist -Filter "ds-next-*.apk" | Sort-Object LastWriteTime -Descending |
     Select-Object -Skip 20 | ForEach-Object { Remove-Item $_.FullName -Force }
 Write-Host "[8/7] archived -> dist\ds-next-$stamp.apk"
+
 
 
 
