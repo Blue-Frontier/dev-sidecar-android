@@ -17,6 +17,7 @@ import android.widget.Toast
  */
 class KernelService : Service() {
 
+    private var foregroundStarted = false
     private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -29,7 +30,13 @@ class KernelService : Service() {
             return START_NOT_STICKY
         }
         createChannel()
-        startForeground(NOTICE_ID, notice("内核 ${KernelRuntime.listenAddr()}"))
+        // A ROM that refuses the specialUse type would otherwise kill the app in
+        // onStartCommand and the kernel would never start; fall back to an ordinary
+        // notice so the proxy still runs.
+        foregroundStarted = runCatching {
+            startForeground(NOTICE_ID, notice("内核 ${KernelRuntime.listenAddr()}"))
+        }.isSuccess
+        if (!foregroundStarted) postNotice("内核 ${KernelRuntime.listenAddr()}")
         holdWakeLock()
         val addr = intent?.getStringExtra(EXTRA_LISTEN) ?: KernelRuntime.savedListen(this)
         val msg = KernelRuntime.start(this, addr)
@@ -56,7 +63,13 @@ class KernelService : Service() {
     }
 
     private fun postNotice(text: String) {
-        runCatching { startForeground(NOTICE_ID, notice(text)) }
+        if (foregroundStarted) {
+            runCatching { startForeground(NOTICE_ID, notice(text)) }
+        } else {
+            runCatching {
+                (getSystemService("notification") as NotificationManager).notify(NOTICE_ID, notice(text))
+            }
+        }
     }
 
     private fun notice(text: String): Notification {
