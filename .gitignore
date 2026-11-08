@@ -3,8 +3,8 @@ build/
 smoke/out/
 *.apk
 *.keystore
-# 例外：CI 要用同一把密钥签名，否则每次构建的 APK 互不兼容
-!debug.keystore
+# 不提交任何签名密钥：本地构建在 ~/.ds-next/ 生成开发用密钥，
+# 发布构建必须用 CI 的 DS_KEYSTORE_B64 私有密钥。
 
 # 依赖暂存（将来走 Maven CLI 拉取）
 lib/

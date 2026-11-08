@@ -13,6 +13,9 @@ permissions:
 jobs:
   build:
     uses: ./.github/workflows/build.yml
+    # The signing key must reach the reusable workflow; without it a tag build
+    # is refused rather than published under a public keystore.
+    secrets: inherit
     with:
       version: ${{ github.ref_name }}
 
@@ -65,7 +68,7 @@ jobs:
             --title "$TITLE" \
             --draft \
             --generate-notes \
-            --notes "DS NEXT $VERSION。按设备架构各一个包：arm64 对应手机，x86_64 对应模拟器/Chromebook；装错了系统会拒绝安装。安装前先卸载旧版本应用，签名不同。"
+            --notes "DS NEXT $VERSION。按设备架构各一个包：arm64 对应手机，x86_64 对应模拟器/Chromebook；装错了系统会拒绝安装。旧版本使用公开的调试密钥签名，从本版起改用私有发布密钥：如果安装时提示签名不一致，需要先卸载旧版，此后版本可以直接覆盖升级。"
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,name,tagName
 
       - name: Mark a fork build as prerelease

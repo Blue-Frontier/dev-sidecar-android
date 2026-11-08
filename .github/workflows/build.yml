@@ -51,6 +51,12 @@ jobs:
       NDK_VERSION: '29.0.14206865'
       ANDROID_PLATFORM: '35'
       MATRIX_ABI: ${{ matrix.abi }}
+      # The release signing key lives only in Actions secrets. Tag builds fail
+      # in build.sh when these are empty instead of shipping a public key.
+      DS_KEYSTORE_B64: ${{ secrets.DS_KEYSTORE_B64 }}
+      DS_KEYSTORE_PASS: ${{ secrets.DS_KEYSTORE_PASS }}
+      DS_KEY_PASS: ${{ secrets.DS_KEY_PASS }}
+      DS_KEY_ALIAS: ${{ secrets.DS_KEY_ALIAS }}
 
     outputs:
       version: ${{ steps.version.outputs.name }}

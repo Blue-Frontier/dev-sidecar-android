@@ -219,9 +219,21 @@ echo "[5/7] dex + .so merged"
 "$ZIPALIGN" -f 4 "$(native "$OUT/base.apk")" "$(native "$OUT/aligned.apk")"
 
 # The key comes from the environment when it is provided, otherwise a local
-# debug.keystore (kept outside build/) is generated once so that a locally
-# installed build can be replaced by the next one.
-KS="$ROOT/debug.keystore"
+# development key in the user's home directory is generated once so that a
+# locally installed build can be replaced by the next one.
+#
+# A tagged release is what users install, so it has to carry the private release
+# key: falling back to a keystore that ships with the source would let anyone
+# sign an "update" that Android accepts over the real app.
+if [[ "${GITHUB_REF_TYPE:-}" == "tag" && -z "${DS_KEYSTORE_B64:-}" ]]; then
+    echo "release tags must be signed with DS_KEYSTORE_B64 (a public keystore cannot authenticate an update)" >&2
+    exit 1
+fi
+# A local development key lives in the user's home directory, never in the
+# checkout: a keystore committed here would let anyone sign an "update" that
+# Android installs over the real app.
+KS="${DS_DEBUG_KEYSTORE:-$HOME/.ds-next/debug.keystore}"
+mkdir -p "$(dirname "$KS")"
 KS_PASS=android
 KEY_PASS=android
 ALIAS=dscore-debug
@@ -237,7 +249,7 @@ elif [[ ! -f "$KS" ]]; then
         -storepass "$KS_PASS" -keypass "$KEY_PASS" -alias "$ALIAS" \
         -dname "CN=dscore-debug, OU=dev, O=blue-frontier" \
         -keyalg RSA -keysize 2048 -validity 10000 >/dev/null
-    echo "generated a fresh debug keystore: releases signed with it cannot upgrade one another"
+    echo "generated a local development keystore at $KS"
 fi
 # v1 (JAR) signing stamps META-INF entries with the build time. minSdk is 29, so
 # the v3 block alone covers every supported device and v1 is pure noise.
