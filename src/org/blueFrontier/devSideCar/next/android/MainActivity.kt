@@ -867,7 +867,7 @@ class MainActivity : Activity() {
     private fun showMenu() {
         val items = arrayOf(
             "设置", "分享本页", "页内查找", "书签", "历史记录",
-            "请求桌面版", "清除浏览数据", "下载管理",
+            "请求桌面版", "清除浏览数据", "下载管理", "设为默认浏览器",
         )
         android.app.AlertDialog.Builder(this)
             .setTitle("更多")
@@ -881,9 +881,38 @@ class MainActivity : Activity() {
                     5 -> toggleDesktopMode()
                     6 -> clearBrowsingData()
                     7 -> startActivity(android.content.Intent(this, DownloadsActivity::class.java))
+                    8 -> requestDefaultBrowser()
                 }
             }
             .show()
+    }
+
+    /**
+     * Asks the system to make this app the default browser. Android 10+ answers
+     * through the browser role; older releases (and systems that do not consider
+     * the app eligible) fall back to the default apps screen.
+     */
+    private fun requestDefaultBrowser() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            val roles = getSystemService(android.app.role.RoleManager::class.java)
+            if (roles != null && roles.isRoleAvailable(android.app.role.RoleManager.ROLE_BROWSER)) {
+                if (roles.isRoleHeld(android.app.role.RoleManager.ROLE_BROWSER)) {
+                    toast("已经是默认浏览器")
+                    return
+                }
+                val asked = runCatching {
+                    startActivity(roles.createRequestRoleIntent(android.app.role.RoleManager.ROLE_BROWSER))
+                }.isSuccess
+                if (asked) return
+            }
+        }
+        val opened = runCatching {
+            startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
+        }.isSuccess
+        if (!opened) {
+            runCatching { startActivity(android.content.Intent(android.provider.Settings.ACTION_SETTINGS)) }
+        }
+        toast("请在系统设置的默认应用里选择本应用")
     }
 
     private fun sharePage() {
