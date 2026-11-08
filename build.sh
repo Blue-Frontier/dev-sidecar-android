@@ -66,6 +66,14 @@ for t in "$AAPT2" "$ZIPALIGN" "$D8_JAR" "$APKSIGNER_JAR" "$JAVA" "$JAR" "$KOTLIN
     if [[ ! -e "$t" ]]; then echo "missing tool: $t" >&2; exit 1; fi
 done
 
+# A tagged release is what users install, so it has to carry the private release
+# key. Fail before compiling: falling back to a keystore from the source tree
+# would let anyone sign an "update" that Android accepts over the real app.
+if [[ "${GITHUB_REF_TYPE:-}" == "tag" && -z "${DS_KEYSTORE_B64:-}" ]]; then
+    echo "release tags must be signed with DS_KEYSTORE_B64 (a public keystore cannot authenticate an update)" >&2
+    exit 1
+fi
+
 # Zip timestamps are written in local time, so a build in another timezone would
 # produce different bytes from the same source.
 export TZ=UTC
@@ -218,17 +226,6 @@ echo "[5/7] dex + .so merged"
 # 6) zipalign + 7) sign.
 "$ZIPALIGN" -f 4 "$(native "$OUT/base.apk")" "$(native "$OUT/aligned.apk")"
 
-# The key comes from the environment when it is provided, otherwise a local
-# development key in the user's home directory is generated once so that a
-# locally installed build can be replaced by the next one.
-#
-# A tagged release is what users install, so it has to carry the private release
-# key: falling back to a keystore that ships with the source would let anyone
-# sign an "update" that Android accepts over the real app.
-if [[ "${GITHUB_REF_TYPE:-}" == "tag" && -z "${DS_KEYSTORE_B64:-}" ]]; then
-    echo "release tags must be signed with DS_KEYSTORE_B64 (a public keystore cannot authenticate an update)" >&2
-    exit 1
-fi
 # A local development key lives in the user's home directory, never in the
 # checkout: a keystore committed here would let anyone sign an "update" that
 # Android installs over the real app.
