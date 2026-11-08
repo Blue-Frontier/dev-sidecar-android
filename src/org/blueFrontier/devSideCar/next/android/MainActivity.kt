@@ -178,6 +178,18 @@ class MainActivity : Activity() {
         applyProxy {
             if (incoming != null) newTab(incoming) else if (!restoreTabs()) newTab(initial)
         }
+        // FreeDroidWarn (Apache-2.0, github.com/woheller69/FreeDroidWarn) tells the
+        // user that this app will stop working once Google requires developer
+        // verification for every app on certified devices. It shows once per version.
+        runCatching {
+            val info = packageManager.getPackageInfo(packageName, 0)
+            val code = if (android.os.Build.VERSION.SDK_INT >= 28) {
+                info.longVersionCode.toInt()
+            } else {
+                @Suppress("DEPRECATION") info.versionCode
+            }
+            org.woheller69.freeDroidWarn.FreeDroidWarn.showWarningOnUpgrade(this, code)
+        }
     }
 
     // ---------------------------------------------------------------- tabs

@@ -140,4 +140,7 @@ dist/                         归档的签名 APK
 - minSdk 29（内核依赖的 TLS 行为与 29 对齐）。发布时按架构拆成两个包：`DS-NEXT-<版本>-arm64.apk`（约 7.6 MB）和 `DS-NEXT-<版本>-x86_64.apk`（约 8.3 MB），装错了系统会直接拒绝。本地要单个架构就用 `-Target android/arm64` 或 `android/amd64` 构建内核。
 - 桌面端"给其它应用当代理"的场景在手机端未实现：代理只作用于本应用的 WebView。
 
+## 第三方依赖
 
+- `androidx.webkit` — `ProxyController`，把内置浏览器的流量交给内核。
+- [FreeDroidWarn](https://github.com/woheller69/FreeDroidWarn)（Apache-2.0）— 启动时提示：Google 从 2026/2027 起要求所有应用在认证设备上通过开发者验证，本项目不参与，届时将无法在认证设备上运行。库的 `res/` 由 `build.ps1` 合并进资源表，`R` 类由 `aapt2 --extra-packages` 生成后用 `javac` 编译——因为没有 Gradle 帮忙做这一步。

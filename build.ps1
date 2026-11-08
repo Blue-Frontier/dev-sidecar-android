@@ -89,6 +89,15 @@ New-Item -ItemType Directory -Path $out | Out-Null
 #    compiled resources (aapt2 has no -S; compiled flat files are inputs).
 & "$env:BUILD_TOOLS\aapt2.exe" compile --dir "$root\res" -o "$out\res.zip"
 if ($LASTEXITCODE) { throw "aapt2 compile failed" }
+
+# Library resources (freedroidwarn) join the same table: aapt2 accepts every
+# compiled flat zip as an input, and the library reads its string ids from the
+# R class generated below.
+$libRes = Join-Path $root 'deps\res-freedroidwarn'
+if (Test-Path $libRes) {
+    & "$env:BUILD_TOOLS\aapt2.exe" compile --dir $libRes -o "$out\libres.zip"
+    if ($LASTEXITCODE) { throw "aapt2 compile (library) failed" }
+}
 # versionCode/versionName come from one formula for every build, local or CI:
 # major*10000 + minor*100 + patch. They used to differ (a date here, the CI run
 # number there), which made a locally installed build impossible to replace
@@ -107,11 +116,24 @@ $versionCode = Get-VersionCode $versionName
       "-A", "$root\assets"
       "-o", "$out\base.apk"
       "$out\res.zip"
+      "--java", "$out\gen"
+      "--extra-packages", "org.woheller69.freeDroidWarn"
   )
+  if (Test-Path "$out\libres.zip") { $linkArgs += "$out\libres.zip" }
   if ($Debuggable) { $linkArgs += "--debug-mode" }
   & "$env:BUILD_TOOLS\aapt2.exe" @linkArgs
   if ($LASTEXITCODE) { throw "aapt2 link failed" }
 Write-Host "[1/7] aapt2 link OK"
+
+# aapt2 emits R.java for the app package and for the extra package; the
+# library resolves its strings through that class, so compile it as well.
+$rJava = @(Get-ChildItem "$out\gen" -Recurse -Filter R.java -ErrorAction SilentlyContinue |
+    ForEach-Object { $_.FullName })
+if ($rJava.Count -gt 0) {
+    New-Item -ItemType Directory -Path "$out\classes" -Force | Out-Null
+    & "$env:JAVA_HOME\bin\javac.exe" -nowarn -source 8 -target 8 -classpath "$env:ANDROID_JAR" -d "$out\classes" @rJava 2>&1 | Out-Host
+    if ($LASTEXITCODE) { throw "javac (R.java) failed" }
+}
 
 # 2) kotlinc: compile all sources against android.jar + gomobile classes.
 #    Escaped outer quotes keep the ';' classpath separator intact.
