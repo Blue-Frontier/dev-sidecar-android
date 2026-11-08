@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The CA is this device's own: restoring it on another phone would hand that
-     phone the same signing key and the same "one CA per install" identity. -->
+<!-- The CA is this device's own (never restored onto another phone), and the
+     WebView profile holds cookies/session tokens plus browsing history, so it
+     stays out of backups as well. -->
 <full-backup-content>
     <exclude domain="file" path="ca" />
+    <exclude domain="file" path="kernel.log" />
+    <exclude domain="root" path="app_webview" />
+    <exclude domain="sharedpref" path="ds-browser.xml" />
 </full-backup-content>

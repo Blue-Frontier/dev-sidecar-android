@@ -1,11 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Same rule as backup_rules.xml for Android 12+: the CA never leaves the
-     device, neither through cloud backup nor through device-to-device transfer. -->
+<!-- Same rule as backup_rules.xml for Android 12+: the CA is device-bound, and
+     WebView cookies/session tokens and the visit log never travel to another
+     device either. -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="file" path="ca" />
+        <exclude domain="file" path="kernel.log" />
+        <exclude domain="root" path="app_webview" />
+        <exclude domain="sharedpref" path="ds-browser.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="file" path="ca" />
+        <exclude domain="file" path="kernel.log" />
+        <exclude domain="root" path="app_webview" />
+        <exclude domain="sharedpref" path="ds-browser.xml" />
     </device-transfer>
 </data-extraction-rules>

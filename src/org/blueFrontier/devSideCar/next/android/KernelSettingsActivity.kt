@@ -528,6 +528,12 @@ class KernelSettingsActivity : Activity() {
             personalStatus.text = "先填写个人配置地址"
             return
         }
+        // The configuration can inject scripts into pages, so a plain-http URL
+        // would let anyone on the network choose what runs in the browser.
+        if (!url.startsWith("https://", ignoreCase = true)) {
+            personalStatus.text = "只接受 https:// 地址"
+            return
+        }
         KernelRuntime.savePersonalUrl(this, url)
         personalBusy = true
         personalStatus.text = "下载中…"

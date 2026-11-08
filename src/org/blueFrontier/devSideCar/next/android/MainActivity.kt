@@ -62,9 +62,12 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Allow chrome://inspect to attach while the render path is being
-        // stabilised; harmless for a debug-signed build.
-        WebView.setWebContentsDebuggingEnabled(true)
+        // Chrome's remote inspector can read every cookie and storage entry of
+        // the page, so it is limited to debuggable builds. Release APKs are
+        // signed but not debuggable, hence the check rather than a constant.
+        if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            WebView.setWebContentsDebuggingEnabled(true)
+        }
 
         urlField = EditText(this).apply {
             hint = "输入网址或搜索"
@@ -164,7 +167,7 @@ class MainActivity : Activity() {
         // Hidden entry for the overwall (增强) mode: the mode row omits it, but
         // `am start ... --es mode ow` still applies it. MainActivity is the only
         // exported activity, so the switch lives here.
-        applyIntentExtras(intent, openUrl = false)
+        applyIntentExtras(intent, openUrl = false, trusted = true)
 
         // `am start --es url X` drives a load from adb (automation, QR handoff);
         // otherwise resume the last page, and on a fresh install open the home page.
@@ -397,10 +400,10 @@ class MainActivity : Activity() {
 
     private fun applySettings(view: WebView) {
         val settings = view.settings
-        // `am start --ez nojs true` keeps script off for one run, which is how
+        // `am start -S --ez nojs true` keeps script off for one run, which is how
         // the "is Google's /sorry redirect script-driven?" question gets a
-        // straight answer on a real device.
-        settings.javaScriptEnabled = !intent.getBooleanExtra("nojs", false)
+        // straight answer on a real device. Only the shell may ask for it.
+        settings.javaScriptEnabled = !(launchedFromShell() && intent.getBooleanExtra("nojs", false))
         settings.domStorageEnabled = true
         settings.databaseEnabled = true
         settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
@@ -483,19 +486,36 @@ class MainActivity : Activity() {
             }
 
             override fun onPermissionRequest(request: android.webkit.PermissionRequest) {
-                val missing = request.resources.mapNotNull { resource ->
-                    when (resource) {
-                        android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE -> android.Manifest.permission.CAMERA
-                        android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE -> android.Manifest.permission.RECORD_AUDIO
-                        else -> null
-                    }
-                }.filter { checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED }
-                if (missing.isEmpty()) {
-                    request.grant(request.resources)
+                // A page can ask for the camera/mic at any time, so the origin has
+                // to be the page actually on screen and it must be https; then the
+                // user sees exactly which host is asking before anything opens.
+                val origin = request.origin
+                val page = web.url?.let { android.net.Uri.parse(it) }
+                val allowedResources = setOf(
+                    android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE,
+                    android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE,
+                )
+                val samePage = origin != null && page != null &&
+                    origin.host.equals(page.host, ignoreCase = true)
+                if (origin == null || origin.scheme != "https" || !samePage ||
+                    !allowedResources.containsAll(request.resources.toSet())
+                ) {
+                    request.deny()
                     return
                 }
-                pendingPermission = request
-                requestPermissions(missing.toTypedArray(), REQ_MEDIA)
+                val what = request.resources.joinToString("、") { resource ->
+                    when (resource) {
+                        android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE -> "摄像头"
+                        else -> "麦克风"
+                    }
+                }
+                android.app.AlertDialog.Builder(this@MainActivity)
+                    .setTitle("权限请求")
+                    .setMessage("${origin.host} 想使用$what。")
+                    .setPositiveButton("允许") { _, _ -> grantPermission(request) }
+                    .setNegativeButton("拒绝") { _, _ -> request.deny() }
+                    .setOnCancelListener { request.deny() }
+                    .show()
             }
 
             override fun onCreateWindow(
@@ -696,7 +716,12 @@ class MainActivity : Activity() {
      */
     /** The URL an intent asks for: an explicit extra, a shared link, or a VIEW link. */
     private fun intentUrl(intent: android.content.Intent): String? {
-        intent.getStringExtra("url")?.takeIf { it.isNotBlank() }?.let { return it }
+        intent.getStringExtra("url")?.let { raw ->
+            // Only web schemes: loadUrl("javascript:…") would run inside the
+            // page the user already has open, so any app could drive it.
+            val scheme = android.net.Uri.parse(raw).scheme?.lowercase()
+            if (scheme == "http" || scheme == "https") return raw
+        }
         sharedUrl(intent)?.let { return it }
         val data = intent.data ?: return null
         return data.toString().takeIf { data.scheme == "http" || data.scheme == "https" }
@@ -717,13 +742,23 @@ class MainActivity : Activity() {
         return match.value.trimEnd('.', ',', ')', ']', '}', '。', '，', '）', '】')
     }
 
-    private fun applyIntentExtras(from: android.content.Intent, openUrl: Boolean = true) {
-        from.getStringExtra("mode")?.takeIf { it.isNotBlank() }?.let { requested ->
-            val ok = KernelRuntime.setMode(this, requested)
-            android.util.Log.i(
-                "ds-mode",
-                "extra=$requested ok=$ok current=${KernelRuntime.currentMode(this)}",
-            )
+    private fun applyIntentExtras(
+        from: android.content.Intent,
+        openUrl: Boolean = true,
+        trusted: Boolean = false,
+    ) {
+        // Automation hooks: `am start -S … --es mode …` is the supported path.
+        // Only a fresh launch can prove it came from the shell, so onNewIntent
+        // never gets to drive them; the URL/link path stays available.
+        val shell = trusted && launchedFromShell()
+        if (shell) {
+            from.getStringExtra("mode")?.takeIf { it.isNotBlank() }?.let { requested ->
+                val ok = KernelRuntime.setMode(this, requested)
+                android.util.Log.i(
+                    "ds-mode",
+                    "extra=$requested ok=$ok current=${KernelRuntime.currentMode(this)}",
+                )
+            }
         }
         intentUrl(from)?.let { url ->
             urlField.setText(url)
@@ -736,22 +771,24 @@ class MainActivity : Activity() {
                 else -> openUrl(url)
             }
         }
-        // `am start --ez downloads true` opens the download list, which is the
-        // only way to drive a transfer from adb (the activity is not exported).
-        if (from.getBooleanExtra("downloads", false)) {
-            startActivity(android.content.Intent(this, DownloadsActivity::class.java))
+        if (shell) {
+            // `am start --ez downloads true` opens the download list, which is the
+            // only way to drive a transfer from adb (the activity is not exported).
+            if (from.getBooleanExtra("downloads", false)) {
+                startActivity(android.content.Intent(this, DownloadsActivity::class.java))
+            }
+            // Automation hooks: touch input does not reach the app on every device,
+            // and these make the menu and the search path checkable from adb.
+            if (from.getBooleanExtra("menu", false)) showMenu()
+            when (from.getStringExtra("action")) {
+                "bookmarks" -> showBookmarks()
+                "history" -> showHistoryAll()
+                "find" -> findInPage()
+                "desktop" -> toggleDesktopMode()
+                "clear" -> clearBrowsingData()
+            }
+            from.getStringExtra("search")?.takeIf { it.isNotBlank() }?.let { openUrl(searchUrl(it)) }
         }
-        // Automation hooks: touch input does not reach the app on every device,
-        // and these make the menu and the search path checkable from adb.
-        if (from.getBooleanExtra("menu", false)) showMenu()
-        when (from.getStringExtra("action")) {
-            "bookmarks" -> showBookmarks()
-            "history" -> showHistoryAll()
-            "find" -> findInPage()
-            "desktop" -> toggleDesktopMode()
-            "clear" -> clearBrowsingData()
-        }
-        from.getStringExtra("search")?.takeIf { it.isNotBlank() }?.let { openUrl(searchUrl(it)) }
     }
 
     @Suppress("DEPRECATION")
@@ -767,6 +804,26 @@ class MainActivity : Activity() {
         super.onBackPressed()
     }
 
+    /** Grants a camera/mic request, asking Android for the runtime permission first. */
+    private fun grantPermission(request: android.webkit.PermissionRequest) {
+        val needed = request.resources.mapNotNull { resource ->
+            when (resource) {
+                android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE -> android.Manifest.permission.CAMERA
+                android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE -> android.Manifest.permission.RECORD_AUDIO
+                else -> null
+            }
+        }.filter { checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED }
+        if (needed.isEmpty()) {
+            request.grant(request.resources)
+            return
+        }
+        // Only one outstanding request makes sense: drop the older one instead of
+        // leaving it unanswered forever.
+        pendingPermission?.deny()
+        pendingPermission = request
+        requestPermissions(needed.toTypedArray(), REQ_MEDIA)
+    }
+
     override fun onRequestPermissionsResult(
         requestCode: Int, permissions: Array<out String>, grantResults: IntArray,
     ) {
@@ -774,7 +831,11 @@ class MainActivity : Activity() {
         if (requestCode != REQ_MEDIA) return
         val request = pendingPermission ?: return
         pendingPermission = null
-        if (grantResults.isNotEmpty() && grantResults.all { it == android.content.pm.PackageManager.PERMISSION_GRANTED }) {
+        val page = web.url?.let { android.net.Uri.parse(it) }
+        val samePage = request.origin?.host.equals(page?.host, ignoreCase = true)
+        if (samePage && grantResults.isNotEmpty() &&
+            grantResults.all { it == android.content.pm.PackageManager.PERMISSION_GRANTED }
+        ) {
             request.grant(request.resources)
         } else {
             request.deny()

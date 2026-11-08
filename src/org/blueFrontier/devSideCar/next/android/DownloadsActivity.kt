@@ -70,11 +70,18 @@ class DownloadsActivity : Activity() {
             v.setPadding(dpx(16), insets.systemWindowInsetTop + dpx(12), dpx(16), insets.systemWindowInsetBottom + dpx(12))
             insets
         }
-        // `am start -n <pkg>/.DownloadsActivity --es downloadUrl <url>` queues a
-        // transfer without going through the browser; the WebView otherwise
-        // aborts the load that would have produced it.
-        intent.getStringExtra("downloadUrl")?.takeIf { it.isNotBlank() }?.let { url ->
-            Downloads.start(this, url, UA, null, null)
+        // `am start -S -n <pkg>/.DownloadsActivity --es downloadUrl <url>` queues
+        // a transfer without going through the browser; the WebView otherwise
+        // aborts the load that would have produced it. The activity is exported
+        // so it must not let another app queue cookie-bearing requests, and only
+        // a web URL is ever handed to the downloader.
+        if (launchedFromShell()) {
+            intent.getStringExtra("downloadUrl")?.let { raw ->
+                val scheme = android.net.Uri.parse(raw).scheme?.lowercase()
+                if (scheme == "http" || scheme == "https") {
+                    Downloads.start(this, raw, UA, null, null)
+                }
+            }
         }
         handler.post(ticker)
     }

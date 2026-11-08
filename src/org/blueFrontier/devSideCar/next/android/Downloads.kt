@@ -62,6 +62,10 @@ object Downloads {
     }
 
     fun start(context: Context, url: String, userAgent: String, disposition: String?, mime: String?) {
+        // Only web URLs: the downloader sends the page's cookies for that host,
+        // so a file:// or content:// target makes no sense here.
+        val scheme = runCatching { java.net.URI(url).scheme?.lowercase() }.getOrNull()
+        if (scheme != "http" && scheme != "https") return
         val task = Task(url, fileName(url, disposition), mime ?: "application/octet-stream", userAgent)
         tasks.add(0, task)
         changed()

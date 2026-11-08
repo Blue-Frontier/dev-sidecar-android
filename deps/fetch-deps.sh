@@ -21,8 +21,25 @@ unpack() { # aar out
     rm -rf "$tmp"
 }
 
-fetch() { # name url out vendored-name
-    local name=$1 url=$2 out=$3 vendored=$4 aar tmp downloaded=0
+sha256() { # file
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    else
+        shasum -a 256 "$1" | awk '{print $1}'
+    fi
+}
+
+verify() { # file expected label
+    local got
+    got=$(sha256 "$1")
+    if [[ "$got" != "$2" ]]; then
+        echo "$3: checksum mismatch (got $got, want $2)" >&2
+        return 1
+    fi
+}
+
+fetch() { # name url out vendored-name sha256
+    local name=$1 url=$2 out=$3 vendored=$4 want=$5 aar tmp downloaded=0
     if [[ -f "$out" ]]; then
         echo "$name: cached"
         return
@@ -41,6 +58,9 @@ fetch() { # name url out vendored-name
         aar=$tmp
         downloaded=1
     fi
+    # Both the vendored copy and the download are checked: this jar lands in
+    # the APK, so an edited AAR would silently become app code.
+    verify "$aar" "$want" "$name" || { ((downloaded)) && rm -f "$aar"; return 1; }
     unpack "$aar" "$out"
     if ((downloaded)); then rm -f "$aar"; fi
     echo "  -> $out"
@@ -51,5 +71,6 @@ fetch() { # name url out vendored-name
 fetch webkit \
     https://dl.google.com/dl/android/maven2/androidx/webkit/webkit/1.12.1/webkit-1.12.1.aar \
     "$JARS/webkit.jar" \
-    webkit-1.12.1.aar
+    webkit-1.12.1.aar \
+    18a0a51ad129e0c8563f031d46c8a7e61169f56ae84e562a0d75686941262111
 
