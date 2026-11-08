@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="org.blueFrontier.devSideCar.next.android"
-    android:versionCode="300"
-    android:versionName="0.3.0">
+    android:versionCode="400"
+    android:versionName="0.4.0">
 
     <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="35" />
 
@@ -98,6 +98,7 @@
         </service>
     </application>
 </manifest>
+
 
 
 
