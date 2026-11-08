@@ -21,6 +21,10 @@ $root = $PSScriptRoot
 $localEnv = 'C:\Users\Nobody\android-toolchain\env.ps1'
 if (Test-Path $localEnv) { . $localEnv }
 
+# Zip timestamps are written in local time, so a build in another timezone would
+# produce different bytes from the same source.
+$env:TZ = 'UTC'
+
 foreach ($v in 'JAVA_HOME', 'ANDROID_JAR', 'BUILD_TOOLS', 'KOTLINC') {
     if (-not (Get-Item "env:$v" -ErrorAction SilentlyContinue).Value) {
         throw "$v is not set and no local toolchain env.ps1 was found"
@@ -231,8 +235,8 @@ if ($env:DS_KEYSTORE_B64) {
         -keyalg RSA -keysize 2048 -validity 10000 | Out-Null
     Write-Host "generated a fresh debug keystore: releases signed with it cannot upgrade one another"
 }
-# v1 (JAR) signing stamps META-INF entries with the build time; v2 covers API
-# 24+ and this app targets 26, so v1 would only add nondeterminism.
+# v1 (JAR) signing stamps META-INF entries with the build time. minSdk is 29,
+# so the v3 block alone covers every supported device and v1 is pure noise.
 & "$env:BUILD_TOOLS\apksigner.bat" sign --ks $ks --ks-key-alias $alias `
     --v1-signing-enabled false `
     "--ks-pass=pass:$ksPass" "--key-pass=pass:$keyPass" `
