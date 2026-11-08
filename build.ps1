@@ -188,6 +188,12 @@ foreach ($entry in $abiLibs) {
     New-Item -ItemType Directory -Path $d -Force | Out-Null
     Copy-Item $entry.So (Join-Path $d 'libgojni.so')
 }
+# A zip entry carries the file mtime, so two builds of the same source differed
+# only in those timestamps. Pin them: this is where a reproducible build starts.
+$fixedTime = [datetime]::SpecifyKind([datetime]'1980-01-01T00:00:00', [System.DateTimeKind]::Utc)
+@(Get-ChildItem "$out\finaldex" -File) + @(Get-ChildItem "$out\stage" -Recurse -File) |
+    ForEach-Object { [System.IO.File]::SetLastWriteTimeUtc($_.FullName, $fixedTime) }
+
 $dexFiles = (Get-ChildItem "$out\finaldex" -Filter *.dex | Sort-Object Name | % Name)
 # jar's -C takes exactly ONE file; chain one -C per dex
 $jarArgs = @("uf", "$out\base.apk")
@@ -225,7 +231,10 @@ if ($env:DS_KEYSTORE_B64) {
         -keyalg RSA -keysize 2048 -validity 10000 | Out-Null
     Write-Host "generated a fresh debug keystore: releases signed with it cannot upgrade one another"
 }
+# v1 (JAR) signing stamps META-INF entries with the build time; v2 covers API
+# 24+ and this app targets 26, so v1 would only add nondeterminism.
 & "$env:BUILD_TOOLS\apksigner.bat" sign --ks $ks --ks-key-alias $alias `
+    --v1-signing-enabled false `
     "--ks-pass=pass:$ksPass" "--key-pass=pass:$keyPass" `
     --out "$out\dscore.apk" "$out\aligned.apk"
 if ($LASTEXITCODE) { throw "apksigner sign failed" }
