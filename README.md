@@ -15,7 +15,7 @@ WebView → 应用内 HTTP 代理（ProxyController 指向 127.0.0.1:31191）
 ```
 
 - **不用 VPN，也不是系统级代理**：`androidx.webkit` 的 `ProxyController` 只把本应用的 WebView 指向内核，其它应用不受影响，也没有授权弹窗。
-- **不用装证书**：内核的 CA 通过 `network_security_config` 作为应用自身的信任锚，WebView 直接认可；`onReceivedSslError` 里还按 issuer 放行一层兜底。
+- **不用装证书**：内核首次启动时在本机生成一把 RSA CA（私钥只存在应用私有目录，每台设备一把），站点证书都由它签发；`onReceivedSslError` 里用这把 CA 的公钥验签后放行，其它证书照常拒绝。旧版本内置的那把共享 CA 会在升级后的首次启动时删除并重新生成。
 - **POST/登录可用**：请求由 WebView 原生发出、整体经过内核，请求体不会被丢掉（早期那套逐请求拦截就是因为拿不到 body 才返回 501 的）。
 - **内核在进程内**：`libgojni.so` + gomobile 绑定，`KernelService` 用前台服务 + WakeLock 保活，应用退到后台时内核继续监听。
 - **拦截开关只管规则匹配**：`server.intercept.enabled=false`（安全模式）时不再匹配规则，预设 IP、DNS 回退、中继仍然工作。
@@ -84,10 +84,9 @@ git push origin v0.2.0
 
 ```
 kernel/                       内核 submodule（ds-core-go）
-assets/                       首次启动落到 files\ 的官方配置、CA 证书与私钥
+assets/                       首次启动落到 files\ 的官方配置、共享 ECH 配置
 res/mipmap-*/                 应用图标
-res/xml/                      网络安全配置（把内核 CA 设为信任锚）
-res/raw/                      内核 CA（PEM）
+res/xml/                      网络安全配置（只信任系统证书；内核 CA 由 WebView 回调校验）
 deps/                         AAR 依赖下载与解包（fetch-deps.ps1）
 src/org/blueFrontier/devSideCar/next/android/
     MainActivity              工具栏 + WebView（代理指向内核）+ 隐藏的 --es mode 入口
@@ -100,7 +99,7 @@ src/org/blueFrontier/devSideCar/next/android/
     HelpActivity              帮助
     LogProvider               把 kernel.log 交给系统分享
     BrowserPrefs              主页设置
-    KernelTrust               内核 CA 的信任链（供探测类请求使用）
+    KernelTrust               本机 CA 的信任链（探测请求与 WebView 验签）
 AndroidManifest.xml
 build.ps1 / sync-kernel.ps1
 dist/                         归档的签名 APK
@@ -143,4 +142,5 @@ dist/                         归档的签名 APK
 ## 第三方依赖
 
 - `androidx.webkit` — `ProxyController`，把内置浏览器的流量交给内核。
-- [FreeDroidWarn](https://github.com/woheller69/FreeDroidWarn)（Apache-2.0）— 启动时提示：Google 从 2026/2027 起要求所有应用在认证设备上通过开发者验证，本项目不参与，届时将无法在认证设备上运行。库的 `res/` 由 `build.ps1` 合并进资源表，`R` 类由 `aapt2 --extra-packages` 生成后用 `javac` 编译——因为没有 Gradle 帮忙做这一步。
+- 启动时的开发者验证提示逐字取自 [FreeDroidWarn](https://github.com/woheller69/FreeDroidWarn)（Apache-2.0），内联在 `DeprecationNotice.kt` 里。原库是三个字符串加一个对话框，而它不附带 `R` 类，无 Gradle 的构建得为此生成资源表和 `R`——为一段文案不值得，所以留了这段等价实现。
+

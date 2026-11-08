@@ -178,9 +178,8 @@ class MainActivity : Activity() {
         applyProxy {
             if (incoming != null) newTab(incoming) else if (!restoreTabs()) newTab(initial)
         }
-        // FreeDroidWarn (Apache-2.0, github.com/woheller69/FreeDroidWarn) tells the
-        // user that this app will stop working once Google requires developer
-        // verification for every app on certified devices. It shows once per version.
+        // Tells the user that this app stops working once Google requires
+        // developer verification; shown once per version.
         runCatching {
             val info = packageManager.getPackageInfo(packageName, 0)
             val code = if (android.os.Build.VERSION.SDK_INT >= 28) {
@@ -188,7 +187,7 @@ class MainActivity : Activity() {
             } else {
                 @Suppress("DEPRECATION") info.versionCode
             }
-            org.woheller69.freeDroidWarn.FreeDroidWarn.showWarningOnUpgrade(this, code)
+            DeprecationNotice.showOnce(this, code)
         }
     }
 
@@ -622,10 +621,16 @@ class MainActivity : Activity() {
                 handler: android.webkit.SslErrorHandler,
                 error: android.net.http.SslError,
             ) {
-                // The kernel CA is an app trust anchor, so its chains
-                // validate normally; this covers the rest.
-                val issuer = error.certificate?.issuedBy?.cName ?: ""
-                if (issuer.contains(KERNEL_CA_ISSUER)) handler.proceed() else handler.cancel()
+                // The kernel signs every intercepted site with the CA it minted
+                // on this device. Nothing else is trusted, so the leaf is only
+                // accepted when this device's CA really signed it.
+                val cert = runCatching { error.certificate?.x509Certificate }.getOrNull()
+                val hostnameMismatch = error.primaryError == android.net.http.SslError.SSL_IDMISMATCH
+                if (KernelTrust.isKernelIssued(this@MainActivity, cert, hostnameMismatch)) {
+                    handler.proceed()
+                } else {
+                    handler.cancel()
+                }
             }
         }
     }

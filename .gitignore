@@ -25,7 +25,6 @@ libs/
 
 # AAR 依赖解出的 jar，由 deps/fetch-deps.ps1 生成
 deps/jars/
-deps/res-*/
 deps/*.aar
 
 # 一大票文档
@@ -34,3 +33,4 @@ DSH-SESSION-MIGRATION.md
 FEATURE-GAPS.md
 PROGRESS.md
 SESSION-SUMMARY.md
+
