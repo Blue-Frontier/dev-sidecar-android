@@ -30,7 +30,7 @@ git clone --recurse-submodules https://github.com/Blue-Frontier/dev-sidecar-andr
 git submodule update --init --recursive
 ```
 
-依赖只有一项：`androidx.webkit`（提供 `ProxyController`，让 WebView 把内核当 HTTP 代理用）。没有 Gradle，所以 `deps/fetch-deps.ps1` 把 AAR 下载下来、取出 `classes.jar`，`build.ps1` 再把它塞进 kotlinc 的 classpath 和 d8（输出第 4c 步）。`deps/jars/` 不入库，CI 在构建前会跑同一个脚本。
+依赖只有一项：`androidx.webkit`（提供 `ProxyController`，让 WebView 把内核当 HTTP 代理用）。没有 Gradle，所以 `deps/fetch-deps.ps1` 把 AAR 下载下来、取出 `classes.jar`，`build.sh` 再把它塞进 kotlinc 的 classpath 和 d8（输出第 4c 步）。`deps/jars/` 不入库，CI 在构建前会跑同一个脚本。
 
 构建脚本按这个顺序解析内核目录，第一个命中即用：
 
@@ -51,14 +51,14 @@ git submodule update --init --recursive
 # 1) 编译内核 AAR（gomobile，arm64）
 & .\kernel\build-kernel-aar.ps1
 # 2) 把 AAR 里的 classes.jar 与 libgojni.so 同步到 libs/
-& .\sync-kernel.ps1
-# 3) aapt2 → kotlinc → d8 → jar uf → zipalign → apksigner
-& .\build.ps1
+& .\sync-kernel.sh
+# 3) aapt2 → kotlinc → d8 → jar uf → zipalign → apksigner（bash 脚本）
+& .\build.sh
 ```
 
 产物 `build\dscore.apk`，每次构建另存一份到 `dist\ds-next-<时间戳>.apk`，哈希追加在 `dist\SHA256SUMS.txt`，只留最近 20 份。
 
-`build.ps1` 会拒绝打包过期内核：`libs\.sync-stamp` 早于最新 `.go` 源码就报错，避免"改了内核却没重新 sync"。
+`build.sh` 会拒绝打包过期内核：`libs\.sync-stamp` 早于最新 `.go` 源码就报错，避免"改了内核却没重新 sync"。
 
 本机跑需要 `C:\Users\Nobody\android-toolchain\env.ps1`；没有它时脚本改从环境变量取工具链（`JAVA_HOME`、`ANDROID_JAR`、`BUILD_TOOLS`、`KOTLINC`、`KOTLIN_STDLIB`、`ANDROID_NDK_HOME`），CI 就是这么跑的。
 
@@ -101,7 +101,7 @@ src/org/blueFrontier/devSideCar/next/android/
     BrowserPrefs              主页设置
     KernelTrust               本机 CA 的信任链（探测请求与 WebView 验签）
 AndroidManifest.xml
-build.ps1 / sync-kernel.ps1
+build.sh / sync-kernel.sh
 dist/                         归档的签名 APK
 ```
 
@@ -143,4 +143,5 @@ dist/                         归档的签名 APK
 
 - `androidx.webkit` — `ProxyController`，把内置浏览器的流量交给内核。
 - 启动时的开发者验证提示逐字取自 [FreeDroidWarn](https://github.com/woheller69/FreeDroidWarn)（Apache-2.0），内联在 `DeprecationNotice.kt` 里。原库是三个字符串加一个对话框，而它不附带 `R` 类，无 Gradle 的构建得为此生成资源表和 `R`——为一段文案不值得，所以留了这段等价实现。
+
 

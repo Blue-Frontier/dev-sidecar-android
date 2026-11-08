@@ -200,36 +200,37 @@ jobs:
           Write-Host "versionName=$name artifact=$artifact"
 
       - name: Fetch the plain-jar dependencies
-        shell: pwsh
+        shell: bash
         run: |
           # No Gradle: each AAR is unpacked to its classes.jar, which is all
-          # kotlinc and d8 need.
-          ./deps/fetch-deps.ps1
+          # kotlinc and d8 need. deps/vendor/ wins over the network.
+          ./deps/fetch-deps.sh
 
       - name: Build the kernel AAR
         working-directory: kernel
-        shell: pwsh
+        shell: bash
         run: |
-          ./build-kernel-aar.ps1 -Target ${{ matrix.target }}
+          ./build-kernel-aar.sh ${{ matrix.target }}
 
       - name: Sync the kernel into the app
-        shell: pwsh
+        shell: bash
         run: |
-          ./sync-kernel.ps1
+          ./sync-kernel.sh
 
       - name: Build and sign the APK
-        shell: pwsh
+        shell: bash
         run: |
-          ./build.ps1
+          ./build.sh
 
       - name: Collect the release files
-        shell: pwsh
+        shell: bash
         run: |
-          New-Item -ItemType Directory -Force -Path release | Out-Null
-          Copy-Item build\dscore.apk "release\${{ steps.version.outputs.artifact }}.apk"
-          $hash = (Get-FileHash "release\${{ steps.version.outputs.artifact }}.apk" -Algorithm SHA256).Hash
-          "$hash  ${{ steps.version.outputs.artifact }}.apk" | Set-Content "release\SHA256SUMS-$env:MATRIX_ABI.txt" -Encoding utf8
-          Get-ChildItem release | Format-Table Name, Length
+          mkdir -p release
+          cp build/dscore.apk "release/${{ steps.version.outputs.artifact }}.apk"
+          sha256sum "release/${{ steps.version.outputs.artifact }}.apk" \
+            | sed "s| .*|  ${{ steps.version.outputs.artifact }}.apk|" \
+            > "release/SHA256SUMS-$MATRIX_ABI.txt"
+          ls -l release
 
       - name: Upload the APK
         uses: actions/upload-artifact@v4

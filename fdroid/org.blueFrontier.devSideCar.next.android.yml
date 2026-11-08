@@ -1,0 +1,66 @@
+# fdroiddata entry for DS NEXT. This file belongs in
+# https://gitlab.com/fdroid/fdroiddata/-/blob/master/metadata/ — it is kept here
+# so the build recipe and the build scripts change together.
+#
+# Status: draft. The toolchain expectations below (kotlinc from Debian, aapt2 and
+# d8 from build-tools, gomobile for the Go kernel) still have to be exercised on
+# the F-Droid build server; expect a round of fixes in the merge request.
+Categories:
+  - Internet
+License: MPL-2.0
+WebSite: https://github.com/Blue-Frontier/dev-sidecar-android
+SourceCode: https://github.com/Blue-Frontier/dev-sidecar-android
+IssueTracker: https://github.com/Blue-Frontier/dev-sidecar-android/issues
+Changelog: https://github.com/Blue-Frontier/dev-sidecar-android/releases
+
+AutoName: DS NEXT
+
+RepoType: git
+Repo: https://github.com/Blue-Frontier/dev-sidecar-android.git
+
+# Reproducible builds: F-Droid rebuilds the tag and compares the result with the
+# APK published here, then ships the developer-signed one.
+Binaries: https://github.com/Blue-Frontier/dev-sidecar-android/releases/download/v%v/DS-NEXT-%v-arm64.apk
+
+Builds:
+  - versionName: 0.4.0
+    versionCode: 400
+    commit: v0.4.0
+    submodules: true
+    sudo:
+      - apt-get update
+      - apt-get install -y --no-install-recommends openjdk-21-jdk-headless unzip
+    # The build needs four things the image does not carry:
+    #   * aapt2 / zipalign / d8 / apksigner from build-tools (ANDROID_HOME)
+    #   * kotlinc (KOTLINC, KOTLIN_STDLIB)
+    #   * gomobile for the Go kernel, built from the vendored Go modules
+    #   * an ANDROID_JAR for the platform the app compiles against
+    # The Kotlin compiler has to come from the distribution: there is no network
+    # here, so `sdkmanager`-style downloads are out.
+    init: |
+      export ANDROID_JAR="$ANDROID_HOME/platforms/android-35/android.jar"
+      export BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+      export KOTLINC=/usr/bin/kotlinc
+      export GOFLAGS=-mod=vendor
+    build: |
+      export ANDROID_JAR="$ANDROID_HOME/platforms/android-35/android.jar"
+      export BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+      export KOTLINC=/usr/bin/kotlinc
+      export GOFLAGS=-mod=vendor
+      cd kernel && ./build-kernel-aar.sh android/arm64 && cd ..
+      ./sync-kernel.sh
+      ./deps/fetch-deps.sh
+      ./build.sh
+    output: build/dscore.apk
+
+MaintainerNotes: |
+  The app packages its own browser plus a Go MITM kernel built with gomobile;
+  there is no Gradle anywhere. build.sh, sync-kernel.sh and
+  kernel/build-kernel-aar.sh are plain bash and run on Debian unchanged. All
+  dependencies are either vendored (deps/vendor/webkit-1.12.1.aar, kernel/vendor)
+  or part of the distribution, so the build needs no network.
+
+AutoUpdateMode: Version v%v
+UpdateCheckMode: Tags ^v[0-9.]+$
+CurrentVersion: 0.4.0
+CurrentVersionCode: 400

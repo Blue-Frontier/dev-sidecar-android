@@ -26,6 +26,8 @@ libs/
 # AAR 依赖解出的 jar，由 deps/fetch-deps.ps1 生成
 deps/jars/
 deps/*.aar
+# ...but the AARs checked in for offline builds are kept.
+!deps/vendor/
 
 # 一大票文档
 BUILDING.md
@@ -33,4 +35,5 @@ DSH-SESSION-MIGRATION.md
 FEATURE-GAPS.md
 PROGRESS.md
 SESSION-SUMMARY.md
+
 
