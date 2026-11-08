@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The CA is this device's own: restoring it on another phone would hand that
+     phone the same signing key and the same "one CA per install" identity. -->
+<full-backup-content>
+    <exclude domain="file" path="ca" />
+</full-backup-content>

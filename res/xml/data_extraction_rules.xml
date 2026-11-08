@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Same rule as backup_rules.xml for Android 12+: the CA never leaves the
+     device, neither through cloud backup nor through device-to-device transfer. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="ca" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="ca" />
+    </device-transfer>
+</data-extraction-rules>
