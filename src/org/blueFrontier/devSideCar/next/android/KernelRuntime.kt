@@ -4,6 +4,7 @@ import android.content.Context
 import mobile.Mobile
 import org.json.JSONObject
 import java.io.File
+import java.security.MessageDigest
 import kotlin.io.copyTo as copyStream
 
 /**
@@ -15,6 +16,23 @@ object KernelRuntime {
 
     const val DEFAULT_PORT = 31191
     private const val PREFS = "ds-kernel"
+
+    /**
+     * The CA that older builds shipped in the APK. Its private key was public,
+     * so an install that still has it must drop it: the kernel then mints a
+     * fresh authority for this device.
+     */
+    private const val LEGACY_CA_SHA256 =
+        "5a2efbad2d1927b35bb566cd5b8f8f3f46b950039695011f8a6da02eac57dde8"
+
+    /**
+     * Which CA scheme this install uses. Anything below 2 predates the
+     * device-minted CA, so its authority is discarded on the first start after
+     * the upgrade and replaced by one random pair that this device keeps.
+     * Bump the constant to rotate every install's CA, exactly once, later.
+     */
+    private const val CA_EPOCH = 2
+    private const val KEY_CA_EPOCH = "caEpoch"
 
     @Volatile
     private var running = false
@@ -45,9 +63,7 @@ object KernelRuntime {
         listen = addr
         return try {
             val config = ensureConfig(ctx)
-            copyAsset(ctx, "ca_ca.crt", "ca/ca.crt")
-            copyAsset(ctx, "ca_ca.key", "ca/ca.key")
-            val caDir = File(ctx.filesDir, "ca").absolutePath
+            val caDir = ensureOwnCa(ctx)
             val logFile = File(ctx.filesDir, "kernel.log").absolutePath
               // Pinned shared ECH config: fetching it live needs a resolver
               // that publishes ECH parameters, which a blocked network cannot reach.
@@ -166,14 +182,48 @@ object KernelRuntime {
         return out.absolutePath
     }
 
-    private fun copyAsset(ctx: Context, asset: String, dest: String): String {
-        val out = File(ctx.filesDir, dest)
-        out.parentFile?.mkdirs()
-        ctx.assets.open(asset, android.content.res.AssetManager.ACCESS_STREAMING).use { input ->
-            out.outputStream().use { input.copyStream(it) }
+    /** The CA the kernel minted on this device (absent until the first start). */
+    fun caCertFile(ctx: Context): File = File(ctx.filesDir, "ca/ca.crt")
+
+    /**
+     * Hands the kernel a CA directory and decides whether it gets to keep what
+     * is in there. On a fresh install the directory is empty, so
+     * `certcache.Load` mints the authority (RSA 2048, ten years, CN
+     * `dev-sidecar-core CA`) before the proxy starts listening; afterwards the
+     * pair is left alone, so it is generated exactly once per install.
+     */
+    private fun ensureOwnCa(ctx: Context): String {
+        val dir = File(ctx.filesDir, "ca")
+        val cert = File(dir, "ca.crt")
+        val key = File(dir, "ca.key")
+        val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+        // First start after the upgrade: whatever CA an older build left in
+        // files/ca is discarded, so the kernel has to mint a new random one.
+        val upgrade = prefs.getInt(KEY_CA_EPOCH, 0) < CA_EPOCH
+        // Fingerprint check as well: a downgrade puts the shared, publicly known
+        // key back, and the epoch alone would then wave it through.
+        val sharedCa = cert.isFile && cert.sha256() == LEGACY_CA_SHA256
+        // A pair missing one half (killed between the two writes) cannot be
+        // loaded; dropping it lets the kernel regenerate instead of failing.
+        val halfWritten = cert.exists() != key.exists()
+
+        if (upgrade || sharedCa || halfWritten) {
+            val certGone = !cert.exists() || cert.delete()
+            val keyGone = !key.exists() || key.delete()
+            // Only a fully discarded pair earns the new epoch; a failed delete
+            // is retried on the next start instead of pinning a stale CA.
+            if (upgrade && certGone && keyGone) {
+                prefs.edit().putInt(KEY_CA_EPOCH, CA_EPOCH).commit()
+            }
         }
-        return out.absolutePath
+        dir.mkdirs()
+        return dir.absolutePath
     }
+
+    private fun File.sha256(): String =
+        MessageDigest.getInstance("SHA-256").digest(readBytes())
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
 }
 
 

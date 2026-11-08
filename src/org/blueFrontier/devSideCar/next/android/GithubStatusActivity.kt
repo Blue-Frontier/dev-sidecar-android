@@ -113,7 +113,7 @@ class GithubStatusActivity : Activity() {
             conn = URL(url).openConnection(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", port)))
                 as HttpURLConnection
             if (conn is HttpsURLConnection) {
-                val (factory, verifier) = KernelTrust.setup()
+                val (factory, verifier) = KernelTrust.setup(this)
                 conn.sslSocketFactory = factory
                 conn.hostnameVerifier = verifier
             }
