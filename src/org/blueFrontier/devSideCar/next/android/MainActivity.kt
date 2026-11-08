@@ -164,7 +164,7 @@ class MainActivity : Activity() {
         // Hidden entry for the overwall (增强) mode: the mode row omits it, but
         // `am start ... --es mode ow` still applies it. MainActivity is the only
         // exported activity, so the switch lives here.
-        applyIntentExtras(intent)
+        applyIntentExtras(intent, openUrl = false)
 
         // `am start --es url X` drives a load from adb (automation, QR handoff);
         // otherwise resume the last page, and on a fresh install open the home page.
@@ -677,14 +677,30 @@ class MainActivity : Activity() {
      * `am start` on a running instance may be swallowed as a task bring-to-front
      * (no onCreate, no onNewIntent), so switching modes from adb needs `-S`.
      */
-    /** The URL a fresh intent asks for: an explicit extra or a VIEW link. */
+    /** The URL an intent asks for: an explicit extra, a shared link, or a VIEW link. */
     private fun intentUrl(intent: android.content.Intent): String? {
         intent.getStringExtra("url")?.takeIf { it.isNotBlank() }?.let { return it }
+        sharedUrl(intent)?.let { return it }
         val data = intent.data ?: return null
         return data.toString().takeIf { data.scheme == "http" || data.scheme == "https" }
     }
 
-    private fun applyIntentExtras(from: android.content.Intent) {
+    private fun isShare(intent: android.content.Intent): Boolean =
+        intent.action == android.content.Intent.ACTION_SEND
+
+    /**
+     * A link shared from another app arrives as ACTION_SEND with the text in
+     * EXTRA_TEXT, usually wrapped in a title or a sentence, so the first http(s)
+     * URL in that text is what gets opened.
+     */
+    private fun sharedUrl(intent: android.content.Intent): String? {
+        if (!isShare(intent)) return null
+        val text = intent.getStringExtra(android.content.Intent.EXTRA_TEXT) ?: return null
+        val match = Regex("https?://[^\\s\"'<>]+").find(text) ?: return null
+        return match.value.trimEnd('.', ',', ')', ']', '}', '。', '，', '）', '】')
+    }
+
+    private fun applyIntentExtras(from: android.content.Intent, openUrl: Boolean = true) {
         from.getStringExtra("mode")?.takeIf { it.isNotBlank() }?.let { requested ->
             val ok = KernelRuntime.setMode(this, requested)
             android.util.Log.i(
@@ -694,7 +710,14 @@ class MainActivity : Activity() {
         }
         intentUrl(from)?.let { url ->
             urlField.setText(url)
-            if (tabs.isNotEmpty()) openUrl(url) else newTab(url)
+            when {
+                // onCreate already opens the incoming link once the proxy override
+                // is in place; opening here as well left two tabs behind.
+                !openUrl -> Unit
+                // A shared link gets its own tab, an adb-driven load reuses the current one.
+                isShare(from) || tabs.isEmpty() -> newTab(url)
+                else -> openUrl(url)
+            }
         }
         // `am start --ez downloads true` opens the download list, which is the
         // only way to drive a transfer from adb (the activity is not exported).
@@ -1047,6 +1070,7 @@ class MainActivity : Activity() {
         const val DEFAULT_HOST = "127.0.0.1"
     }
 }
+
 
 
 
