@@ -109,6 +109,24 @@ class DownloadsActivity : Activity() {
             maxLines = 2
         })
 
+        // A bar is only meaningful while bytes are moving: once the transfer is
+        // done or has failed it would just take up space.
+        if (task.state == Downloads.State.RUNNING || task.state == Downloads.State.PAUSED) {
+            val known = task.total > 0 && task.percent >= 0
+            card.addView(
+                android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                    max = 100
+                    isIndeterminate = !known
+                    progressTintList = android.content.res.ColorStateList.valueOf(ACCENT)
+                    if (known) progress = task.percent.coerceIn(0, 100)
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        dpx(6),
+                    ).apply { topMargin = dpx(8) }
+                },
+            )
+        }
+
         val percent = task.percent
         val detail = buildString {
             if (percent >= 0) append("$percent%  ") else if (task.state == Downloads.State.DONE) append("100%  ")
@@ -191,6 +209,7 @@ class DownloadsActivity : Activity() {
         private val TEXT = Color.parseColor("#E6E8EB")
         private val MUTED = Color.parseColor("#9AA4B2")
         private val FAILED = Color.parseColor("#FF7A7A")
+private val ACCENT = Color.parseColor("#4C8DFF")
     }
 }
 
