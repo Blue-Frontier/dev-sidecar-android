@@ -2,9 +2,8 @@
 # https://gitlab.com/fdroid/fdroiddata/-/blob/master/metadata/ — it is kept here
 # so the build recipe and the build scripts change together.
 #
-# Status: draft. The toolchain expectations below (kotlinc from Debian, aapt2 and
-# d8 from build-tools, gomobile for the Go kernel) still have to be exercised on
-# the F-Droid build server; expect a round of fixes in the merge request.
+# Status: draft, and one item is still open — see "Kotlin" below. Everything else
+# matches what .github/workflows/build.yml pins.
 Categories:
   - Internet
 License: MPL-2.0
@@ -18,9 +17,14 @@ AutoName: DS NEXT
 RepoType: git
 Repo: https://github.com/Blue-Frontier/dev-sidecar-android.git
 
-# Reproducible builds: F-Droid rebuilds the tag and compares the result with the
-# APK published here, then ships the developer-signed one.
+# Reproducible builds: F-Droid rebuilds the tag, copies our signature onto its
+# own build with apksigcopier, and publishes the developer-signed APK only if the
+# payloads match. The APK below is therefore the reference this recipe is checked
+# against — it must be published, not left as a draft.
 Binaries: https://github.com/Blue-Frontier/dev-sidecar-android/releases/download/v%v/DS-NEXT-%v-arm64.apk
+# Only this certificate may sign the binary above. Without it `fdroid update`
+# does not check who signed the APK it publishes under our name.
+AllowedAPKSigningKeys: 13e142299f4e42ebca1d034a339e3b789ee379a618abcf186c9b49431bcb6108
 
 Builds:
   - versionName: 0.4.0
@@ -30,35 +34,45 @@ Builds:
     sudo:
       - apt-get update
       - apt-get install -y --no-install-recommends openjdk-21-jdk-headless unzip
-    # The build needs four things the image does not carry:
-    #   * aapt2 / zipalign / d8 / apksigner from build-tools (ANDROID_HOME)
-    #   * kotlinc (KOTLINC, KOTLIN_STDLIB)
-    #   * gomobile for the Go kernel, built from the vendored Go modules
-    #   * an ANDROID_JAR for the platform the app compiles against
-    # The Kotlin compiler has to come from the distribution: there is no network
-    # here, so `sdkmanager`-style downloads are out.
+    # Everything the build needs is either in the checkout or in the image:
+    #   * aapt2 / zipalign / d8 / apksigner — build-tools 37.0.0 (pinned to match CI)
+    #   * android.jar                           — platform 35
+    #   * the Go modules                        — kernel/goproxy (file:// module proxy)
+    #   * androidx.webkit                       — deps/vendor/webkit-1.12.1.aar
+    #   * gomobile + gobind                     — installed from kernel/goproxy
+    # The one exception is the Kotlin compiler; see the note in MaintainerNotes.
     init: |
       export ANDROID_JAR="$ANDROID_HOME/platforms/android-35/android.jar"
-      export BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
-      export KOTLINC=/usr/bin/kotlinc
-      export GOFLAGS=-mod=vendor
+      export BUILD_TOOLS="$ANDROID_HOME/build-tools/37.0.0"
+      export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865"
     build: |
+      set -euo pipefail
       export ANDROID_JAR="$ANDROID_HOME/platforms/android-35/android.jar"
-      export BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
-      export KOTLINC=/usr/bin/kotlinc
-      export GOFLAGS=-mod=vendor
-      cd kernel && ./build-kernel-aar.sh android/arm64 && cd ..
-      ./sync-kernel.sh
+      export BUILD_TOOLS="$ANDROID_HOME/build-tools/37.0.0"
+      export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865"
+      # Pinned to the compiler the release was built with; a different kotlinc
+      # emits different dex bytes and reproducibility is lost.
+      export KOTLINC="$PWD/.toolchain/kotlinc/bin/kotlinc"
+      export KOTLIN_STDLIB="$PWD/.toolchain/kotlinc/lib/kotlin-stdlib.jar"
       ./deps/fetch-deps.sh
-      ./build.sh
-    output: build/dscore.apk
+      ( cd kernel && ./build-kernel-aar.sh android/arm64 )
+      ./sync-kernel.sh
+      # Unsigned: F-Droid supplies the signature for comparison, and a local
+      # development key would only add a second, meaningless one.
+      ./build.sh --unsigned
+    output: build/dscore-unsigned.apk
 
 MaintainerNotes: |
-  The app packages its own browser plus a Go MITM kernel built with gomobile;
-  there is no Gradle anywhere. build.sh, sync-kernel.sh and
-  kernel/build-kernel-aar.sh are plain bash and run on Debian unchanged. All
-  dependencies are either vendored (deps/vendor/webkit-1.12.1.aar, kernel/vendor)
-  or part of the distribution, so the build needs no network.
+  No Gradle anywhere: build.sh, sync-kernel.sh and kernel/build-kernel-aar.sh are
+  plain bash and run on Debian unchanged. The same three scripts run in CI on
+  ubuntu-latest with the same pins (build-tools 37.0.0, NDK 29.0.14206865,
+  Kotlin 2.4.21, JDK 21), and the build job rebuilds twice and compares hashes so
+  nondeterminism is caught before a tag is cut.
+
+  Kotlin is the open item: the release is built with kotlin-compiler 2.4.21, and
+  Debian's kotlin package is older, so the compiler has to be vendored (an ~80 MB
+  zip unpacked into .toolchain/) for the rebuild to produce identical dex. Until
+  that is settled this recipe can build, but not reproducibly.
 
 AutoUpdateMode: Version v%v
 UpdateCheckMode: Tags ^v[0-9.]+$

@@ -2,6 +2,11 @@ name: Build
 
 # One build path for every trigger: pushes and PRs build and upload, a tag calls
 # this same workflow from release.yml so the released binary is the tested one.
+#
+# Linux on purpose. F-Droid rebuilds every tagged release on Debian and compares
+# the result with the binary published here; sharing the OS removes the biggest
+# source of byte differences (aapt2/zipalign are native binaries, and the Windows
+# and Linux builds are not guaranteed to emit identical archives).
 on:
   push:
     branches: [main]
@@ -14,7 +19,7 @@ on:
   workflow_call:
     inputs:
       version:
-        description: Version name to stamp into the manifest (e.g. v0.2.0)
+        description: Version the tag claims (e.g. v0.2.0); must match the manifest
         type: string
         required: false
         default: ''
@@ -33,7 +38,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 45
 
     # One job per architecture: the kernel is a 19 MB native library, so a fat
@@ -47,9 +52,9 @@ jobs:
           - abi: x86_64
             target: android/amd64
 
-    # Pinned to the toolchain the app is developed against. The build is a shell
-    # chain (aapt2 -> kotlinc -> d8 -> zipalign -> apksigner) rather than Gradle,
-    # so these versions are what the scripts expect to find.
+    # Pinned to the toolchain the app is developed against, and to the versions
+    # the F-Droid recipe pins: a rebuilder that uses a different aapt2, d8 or
+    # kotlinc gets different dex and resource bytes.
     env:
       KOTLIN_VERSION: '2.4.21'
       BUILD_TOOLS_VERSION: '37.0.0'
@@ -72,53 +77,29 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      # The runner image already ships the Android SDK; android-actions/setup-android
-      # fails here because it still installs the retired "tools" package. Drive
-      # sdkmanager directly and fall back to the newest package when the pinned
-      # version is gone from the repository.
       - name: Install build-tools, platform and NDK
-        shell: pwsh
+        shell: bash
         run: |
-          $sdk = $env:ANDROID_HOME
-          if (-not $sdk) { $sdk = 'C:\Android\android-sdk' }
-          if (-not (Test-Path $sdk)) { throw "Android SDK not found at $sdk" }
+          set -euo pipefail
+          sm=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | sort | tail -1)
+          [ -n "$sm" ] || { echo "sdkmanager not found under $ANDROID_HOME" >&2; exit 1; }
+          yes | "$sm" --licenses >/dev/null 2>&1 || true
 
-          $sm = Get-ChildItem (Join-Path $sdk 'cmdline-tools') -Recurse -Filter sdkmanager.bat -ErrorAction SilentlyContinue |
-                Sort-Object FullName -Descending | Select-Object -First 1
-          if (-not $sm) { throw "sdkmanager.bat not found under $sdk\cmdline-tools" }
-          Write-Host "sdkmanager: $($sm.FullName)"
-
-          ("ANDROID_HOME=$sdk", "ANDROID_SDK_ROOT=$sdk") |
-            ForEach-Object { $_ | Out-File $env:GITHUB_ENV -Append -Encoding utf8 }
-
-          ("y`n" * 40) | & $sm.FullName --sdk_root=$sdk --licenses 2>&1 | Out-Null
-
-          function Install-Package {
-            param([string]$Prefix, [string]$Want)
-            & $sm.FullName --sdk_root=$sdk --install "$Prefix;$Want" 2>&1 | Out-Null
-            if ($LASTEXITCODE -eq 0) { return $Want }
-
-            $pattern = "^\s+$([regex]::Escape($Prefix));(\d+(?:\.\d+)*)"
-            $best = & $sm.FullName --sdk_root=$sdk --list 2>&1 |
-                Select-String -Pattern $pattern |
-                ForEach-Object { $_.Matches[0].Groups[1].Value } |
-                Sort-Object { [version]$_ } -Descending |
-                Select-Object -First 1
-            if (-not $best) { throw "no $Prefix package available in the SDK repository" }
-            Write-Host "$Prefix;$Want is unavailable, installing $Prefix;$best instead"
-            & $sm.FullName --sdk_root=$sdk --install "$Prefix;$best" 2>&1 | Out-Null
-            if ($LASTEXITCODE) { throw "installing $Prefix;$best failed" }
-            return $best
+          # The pinned version is what the release must use; if the repository no
+          # longer carries it the build stops instead of silently picking another.
+          install_pkg() {
+            "$sm" --sdk_root="$ANDROID_HOME" --install "$1;$2" >/dev/null
           }
+          install_pkg build-tools "$BUILD_TOOLS_VERSION"
+          install_pkg ndk "$NDK_VERSION"
+          install_pkg platforms "android-$ANDROID_PLATFORM"
 
-          $bt = Install-Package 'build-tools' $env:BUILD_TOOLS_VERSION
-          $ndk = Install-Package 'ndk' $env:NDK_VERSION
-          & $sm.FullName --sdk_root=$sdk --install "platforms;android-$env:ANDROID_PLATFORM" 2>&1 | Out-Null
-          if ($LASTEXITCODE) { throw "installing platform $env:ANDROID_PLATFORM failed" }
-
-          "BUILD_TOOLS=$(Join-Path $sdk "build-tools\$bt")" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
-          "ANDROID_NDK_HOME=$(Join-Path $sdk "ndk\$ndk")" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
-          Write-Host "build-tools=$bt ndk=$ndk platform=$env:ANDROID_PLATFORM"
+          {
+            echo "BUILD_TOOLS=$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION"
+            echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION"
+            echo "ANDROID_JAR=$ANDROID_HOME/platforms/android-$ANDROID_PLATFORM/android.jar"
+          } >>"$GITHUB_ENV"
+          ls -d "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION" "$ANDROID_HOME/ndk/$NDK_VERSION"
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -128,81 +109,72 @@ jobs:
 
       - name: Install gomobile
         working-directory: kernel
-        shell: pwsh
+        shell: bash
         run: |
+          set -euo pipefail
           # Same version the kernel module pins, so the bindings match go.mod.
-          $ver = go list -m -f '{{.Version}}' golang.org/x/mobile
-          # gomobile shells out to gobind, which is a separate command in the
-          # same module; a local GOPATH usually already has both, a fresh runner
-          # has neither.
-          foreach ($cmd in 'gomobile', 'gobind') {
-              go install "golang.org/x/mobile/cmd/$cmd@$ver"
-              if ($LASTEXITCODE) { throw "installing $cmd failed" }
-          }
-          $bindir = Join-Path (go env GOPATH) 'bin'
-          $bindir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          ver=$(go list -m -f '{{.Version}}' golang.org/x/mobile)
+          go install "golang.org/x/mobile/cmd/gomobile@$ver"
+          go install "golang.org/x/mobile/cmd/gobind@$ver"
+          echo "$(go env GOPATH)/bin" >>"$GITHUB_PATH"
 
-      - name: Install Kotlin compiler
+      - name: Cache the Kotlin compiler
         uses: actions/cache@v4
         id: kotlin-cache
         with:
-          path: ${{ github.workspace }}\.toolchain
-          key: kotlin-${{ env.KOTLIN_VERSION }}
+          path: ${{ github.workspace }}/.toolchain
+          key: kotlin-${{ env.KOTLIN_VERSION }}-linux
 
       - name: Download Kotlin compiler (cache miss)
         if: steps.kotlin-cache.outputs.cache-hit != 'true'
-        shell: pwsh
+        shell: bash
         run: |
-          $url = "https://github.com/JetBrains/kotlin/releases/download/v$env:KOTLIN_VERSION/kotlin-compiler-$env:KOTLIN_VERSION.zip"
-          New-Item -ItemType Directory -Force -Path .toolchain | Out-Null
-          Invoke-WebRequest -Uri $url -OutFile kotlin.zip
-          Expand-Archive -Path kotlin.zip -DestinationPath .toolchain -Force
-          Remove-Item kotlin.zip
+          set -euo pipefail
+          url="https://github.com/JetBrains/kotlin/releases/download/v$KOTLIN_VERSION/kotlin-compiler-$KOTLIN_VERSION.zip"
+          mkdir -p .toolchain
+          curl --fail --location --silent --show-error -o kotlin.zip "$url"
+          unzip -q kotlin.zip -d .toolchain
+          rm -f kotlin.zip
 
       - name: Export toolchain paths
-        shell: pwsh
+        shell: bash
         run: |
-          $sdk = $env:ANDROID_HOME
-          # BUILD_TOOLS and ANDROID_NDK_HOME were resolved by the install step
-          # (the pinned version may have been substituted), so reuse them.
-          $bt = $env:BUILD_TOOLS
-          $kotlin = Join-Path $env:GITHUB_WORKSPACE '.toolchain\kotlinc'
-          $kotlinc = if (Test-Path "$kotlin\bin\kotlinc.bat") { "$kotlin\bin\kotlinc.bat" } else { "$kotlin\bin\kotlinc" }
+          set -euo pipefail
+          {
+            echo "KOTLINC=$GITHUB_WORKSPACE/.toolchain/kotlinc/bin/kotlinc"
+            echo "KOTLIN_STDLIB=$GITHUB_WORKSPACE/.toolchain/kotlinc/lib/kotlin-stdlib.jar"
+          } >>"$GITHUB_ENV"
+          echo "$GITHUB_WORKSPACE/.toolchain/kotlinc/bin" >>"$GITHUB_PATH"
 
-          "ANDROID_JAR=$(Join-Path $sdk "platforms\android-$env:ANDROID_PLATFORM\android.jar")" |
-            Out-File $env:GITHUB_ENV -Append -Encoding utf8
-          "KOTLINC=$kotlinc" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
-          "KOTLIN_STDLIB=$kotlin\lib\kotlin-stdlib.jar" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
-
-          # aapt2/d8/zipalign/apksigner live in build-tools; jar/keytool in the JDK.
-          "$bt" | Out-File $env:GITHUB_PATH -Append -Encoding utf8
-          "$kotlin\bin" | Out-File $env:GITHUB_PATH -Append -Encoding utf8
-
-      - name: Stamp the version from the tag
+      # The version lives in the manifest and is committed with the release, so a
+      # rebuild from the tag produces the same bytes. Rewriting it here would mean
+      # the tag and the manifest disagree, and F-Droid would build something else.
+      - name: Verify the version matches the tag
         id: version
-        shell: pwsh
+        shell: bash
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
-          $manifest = 'AndroidManifest.xml'
-          if ($env:INPUT_VERSION) {
-              $name = $env:INPUT_VERSION -replace '^v', ''
-              # Same formula as build.ps1 so a local build and a release share
-              # one scheme: major*10000 + minor*100 + patch.
-              $parts = $name -split '\.'
-              while ($parts.Count -lt 3) { $parts += '0' }
-              $code = [int]$parts[0] * 10000 + [int]$parts[1] * 100 + [int]$parts[2]
-              $text = Get-Content $manifest -Raw
-              $text = $text -replace 'android:versionName="[^"]*"', "android:versionName=`"$name"""
-              $text = $text -replace 'android:versionCode="[^"]*"', "android:versionCode=`"$code"""
-              Set-Content $manifest -Value $text -NoNewline
-          } else {
-              $name = [regex]::Match((Get-Content $manifest -Raw), 'android:versionName="([^"]*)"').Groups[1].Value
-          }
-          $artifact = "DS-NEXT-$name-$env:MATRIX_ABI"
-          "name=$name" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
-          "artifact=$artifact" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
-          Write-Host "versionName=$name artifact=$artifact"
+          set -euo pipefail
+          manifest=$(sed -n 's/.*android:versionName="\([^"]*\)".*/\1/p' AndroidManifest.xml | head -1)
+          code=$(sed -n 's/.*android:versionCode="\([^"]*\)".*/\1/p' AndroidManifest.xml | head -1)
+          if [ -n "${INPUT_VERSION:-}" ]; then
+            want=${INPUT_VERSION#v}
+            if [ "$want" != "$manifest" ]; then
+              echo "tag says $want but AndroidManifest.xml says $manifest: bump the manifest and commit it before tagging" >&2
+              exit 1
+            fi
+          fi
+          # Same formula as build.sh: major*10000 + minor*100 + patch.
+          IFS=. read -r major minor patch _ <<<"$manifest"
+          expected=$((10#${major//[!0-9]/} * 10000 + 10#${minor//[!0-9]/} * 100 + 10#${patch//[!0-9]/}))
+          if [ "$code" != "$expected" ]; then
+            echo "versionCode $code does not match $manifest (expected $expected)" >&2
+            exit 1
+          fi
+          echo "name=$manifest" >>"$GITHUB_OUTPUT"
+          echo "artifact=DS-NEXT-$manifest-$MATRIX_ABI" >>"$GITHUB_OUTPUT"
+          echo "versionName=$manifest versionCode=$code"
 
       - name: Fetch the plain-jar dependencies
         shell: bash
@@ -234,9 +206,29 @@ jobs:
             ./build.sh
           fi
 
+      # The gate that keeps reproducible builds reproducible: same commit, same
+      # toolchain, twice. F-Droid compares its own rebuild against our unsigned
+      # payload, so nondeterminism here would silently break every release.
+      - name: Verify the build is reproducible
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./build.sh --unsigned >/dev/null
+          cp build/dscore-unsigned.apk /tmp/first.apk
+          ./build.sh --unsigned >/dev/null
+          first=$(sha256sum /tmp/first.apk | cut -d' ' -f1)
+          second=$(sha256sum build/dscore-unsigned.apk | cut -d' ' -f1)
+          echo "first  $first"
+          echo "second $second"
+          if [ "$first" != "$second" ]; then
+            echo "the same source produced two different APKs; a rebuild would not match this release" >&2
+            exit 1
+          fi
+
       - name: Collect the release files
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p release
           src=build/dscore.apk
           if [ -f build/dscore-unsigned.apk ]; then src=build/dscore-unsigned.apk; fi
@@ -253,11 +245,3 @@ jobs:
           path: release/*
           if-no-files-found: error
           retention-days: 30
-
-
-
-
-
-
-
-
