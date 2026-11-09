@@ -598,7 +598,6 @@ class MainActivity : Activity() {
             }
 
             override fun onPageStarted(wv: WebView, url: String, favicon: android.graphics.Bitmap?) {
-                if (url.startsWith("http")) failedUrl = null
                 progress.visibility = android.view.View.VISIBLE
             }
 
@@ -950,6 +949,7 @@ class MainActivity : Activity() {
     }
 
     private fun loadUrl() {
+        failedUrl = null
         val raw = urlField.text.toString().trim()
         if (raw.isEmpty()) return
         // Enter used to leave the keyboard covering the page, which read as
@@ -1122,6 +1122,7 @@ class MainActivity : Activity() {
     }
 
     private fun openUrl(url: String) {
+        failedUrl = null
         if (tabs.isEmpty()) newTab(url) else {
             tabs[active].url = url
             tabs[active].loaded = true
