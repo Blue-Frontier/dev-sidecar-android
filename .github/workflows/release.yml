@@ -1,7 +1,7 @@
 name: Release
 
-# Tag push is the only trigger: it reuses build.yml so the published binary is
-# byte-for-byte what the normal build produced.
+# Tag push is the only trigger: it reuses build.yml for both architectures and
+# then signs both APKs once, in a job that holds the release key.
 on:
   push:
     tags:
@@ -13,27 +13,96 @@ permissions:
 jobs:
   build:
     uses: ./.github/workflows/build.yml
-    # The signing key must reach the reusable workflow; without it a tag build
-    # is refused rather than published under a public keystore.
-    secrets: inherit
     with:
       version: ${{ github.ref_name }}
+      # Signing is a separate, approved job below, so the matrix build must not
+      # need the key at all.
+      unsigned: true
+
+  # One approval for the whole release: this is the only job that can see the
+  # signing key, and it is a single (non-matrix) job.
+  sign:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - name: Download unsigned APKs
+        uses: actions/download-artifact@v4
+        with:
+          # One artifact per architecture, produced by the matrix build.
+          pattern: DS-NEXT-${{ needs.build.outputs.version }}-*
+          merge-multiple: true
+          path: release
+
+      - name: Locate apksigner
+        run: |
+          sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          find_signer() {
+            find "$sdk/build-tools" -maxdepth 2 -name apksigner -type f 2>/dev/null | sort -V | tail -1
+          }
+          signer=$(find_signer || true)
+          if [ -z "$signer" ]; then
+            yes | "$sdk/cmdline-tools/latest/bin/sdkmanager" "build-tools;35.0.0" >/dev/null
+            signer=$(find_signer || true)
+          fi
+          [ -n "$signer" ] || { echo "apksigner not found" >&2; exit 1; }
+          echo "APKSIGNER=$signer" >> "$GITHUB_ENV"
+
+      - name: Sign both APKs with the release key
+        env:
+          DS_KEYSTORE_B64: ${{ secrets.DS_KEYSTORE_B64 }}
+          DS_KEYSTORE_PASS: ${{ secrets.DS_KEYSTORE_PASS }}
+          DS_KEY_ALIAS: ${{ secrets.DS_KEY_ALIAS }}
+          # Optional repository variable: the certificate the APKs must carry.
+          EXPECTED_SIGNER_SHA256: ${{ vars.EXPECTED_SIGNER_SHA256 }}
+        run: |
+          set -euo pipefail
+          ks="$RUNNER_TEMP/release.keystore"
+          printf '%s' "$DS_KEYSTORE_B64" | base64 -d > "$ks"
+          trap 'rm -f "$ks"' EXIT
+          mkdir -p signed
+          : > "$RUNNER_TEMP/certs.txt"
+          for apk in release/*.apk; do
+            name=$(basename "$apk")
+            # PKCS12 keeps a single password for the store and its key.
+            "$APKSIGNER" sign --ks "$ks" --ks-key-alias "$DS_KEY_ALIAS" \
+              --v1-signing-enabled false \
+              --ks-pass "pass:$DS_KEYSTORE_PASS" \
+              --key-pass "pass:$DS_KEYSTORE_PASS" \
+              --out "signed/$name" "$apk"
+            "$APKSIGNER" verify --print-certs "signed/$name" | tee -a "$RUNNER_TEMP/certs.txt"
+            mv "signed/$name" "$apk"
+          done
+          if [ -n "${EXPECTED_SIGNER_SHA256:-}" ]; then
+            grep -qi "$EXPECTED_SIGNER_SHA256" "$RUNNER_TEMP/certs.txt" \
+              || { echo "APK is not signed by the expected key" >&2; exit 1; }
+          fi
+          # The build job's per-ABI sums describe the unsigned files.
+          rm -f release/SHA256SUMS-*.txt
+          ( cd release && sha256sum *.apk > SHA256SUMS.txt )
+
+      - name: Upload signed APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed
+          path: release/*
+          if-no-files-found: error
 
   release:
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, sign]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Download both APKs
+      - name: Download signed APKs
         uses: actions/download-artifact@v4
         with:
-          # One artifact per architecture, produced by the matrix build.
-          pattern: DS-NEXT-${{ needs.build.outputs.version }}-*
-          merge-multiple: true
+          name: signed
           path: release
 
       - name: Inspect the release files
@@ -79,5 +148,3 @@ jobs:
         run: |
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,name
-
-

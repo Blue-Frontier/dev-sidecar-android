@@ -11,9 +11,13 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 DEBUGGABLE=0
+UNSIGNED=0
 for arg in "$@"; do
     case "$arg" in
         --debuggable) DEBUGGABLE=1 ;;
+        # CI splits signing into its own job (and environment approval), so the
+        # matrix build produces unsigned APKs for that job to sign.
+        --unsigned) UNSIGNED=1 ;;
         *) echo "unknown argument: $arg" >&2; exit 2 ;;
     esac
 done
@@ -69,7 +73,9 @@ done
 # A tagged release is what users install, so it has to carry the private release
 # key. Fail before compiling: falling back to a keystore from the source tree
 # would let anyone sign an "update" that Android accepts over the real app.
-if [[ "${GITHUB_REF_TYPE:-}" == "tag" && -z "${DS_KEYSTORE_B64:-}" ]]; then
+# A matrix build that hands the APK to the dedicated signing job has no key by
+# design, so the guard only applies to builds that sign here.
+if ((UNSIGNED == 0)) && [[ "${GITHUB_REF_TYPE:-}" == "tag" && -z "${DS_KEYSTORE_B64:-}" ]]; then
     echo "release tags must be signed with DS_KEYSTORE_B64 (a public keystore cannot authenticate an update)" >&2
     exit 1
 fi
@@ -225,6 +231,13 @@ echo "[5/7] dex + .so merged"
 
 # 6) zipalign + 7) sign.
 "$ZIPALIGN" -f 4 "$(native "$OUT/base.apk")" "$(native "$OUT/aligned.apk")"
+
+if ((UNSIGNED)); then
+    cp "$OUT/aligned.apk" "$OUT/dscore-unsigned.apk"
+    echo "[6/7] zipalign OK"
+    echo "[7/7] unsigned -> $OUT/dscore-unsigned.apk"
+    exit 0
+fi
 
 # A local development key lives in the user's home directory, never in the
 # checkout: a keystore committed here would let anyone sign an "update" that

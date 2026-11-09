@@ -18,6 +18,11 @@ on:
         type: string
         required: false
         default: ''
+      unsigned:
+        description: Leave the APK unsigned for the release signing job
+        type: boolean
+        required: false
+        default: false
     outputs:
       version:
         description: Version name that ended up in the APK
@@ -51,12 +56,6 @@ jobs:
       NDK_VERSION: '29.0.14206865'
       ANDROID_PLATFORM: '35'
       MATRIX_ABI: ${{ matrix.abi }}
-      # The release signing key lives only in Actions secrets. Tag builds fail
-      # in build.sh when these are empty instead of shipping a public key.
-      DS_KEYSTORE_B64: ${{ secrets.DS_KEYSTORE_B64 }}
-      DS_KEYSTORE_PASS: ${{ secrets.DS_KEYSTORE_PASS }}
-      DS_KEY_PASS: ${{ secrets.DS_KEY_PASS }}
-      DS_KEY_ALIAS: ${{ secrets.DS_KEY_ALIAS }}
 
     outputs:
       version: ${{ steps.version.outputs.name }}
@@ -223,16 +222,25 @@ jobs:
         run: |
           ./sync-kernel.sh
 
-      - name: Build and sign the APK
+      - name: Build the APK
         shell: bash
         run: |
-          ./build.sh
+          # Release builds hand the APK to the signing job in release.yml; the
+          # other triggers sign with a throwaway local key so the artifact stays
+          # installable for testers.
+          if [ "${{ inputs.unsigned }}" = "true" ]; then
+            ./build.sh --unsigned
+          else
+            ./build.sh
+          fi
 
       - name: Collect the release files
         shell: bash
         run: |
           mkdir -p release
-          cp build/dscore.apk "release/${{ steps.version.outputs.artifact }}.apk"
+          src=build/dscore.apk
+          if [ -f build/dscore-unsigned.apk ]; then src=build/dscore-unsigned.apk; fi
+          cp "$src" "release/${{ steps.version.outputs.artifact }}.apk"
           sha256sum "release/${{ steps.version.outputs.artifact }}.apk" \
             | sed "s| .*|  ${{ steps.version.outputs.artifact }}.apk|" \
             > "release/SHA256SUMS-$MATRIX_ABI.txt"
