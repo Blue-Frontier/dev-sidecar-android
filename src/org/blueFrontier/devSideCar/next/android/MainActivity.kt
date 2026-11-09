@@ -102,7 +102,7 @@ class MainActivity : Activity() {
             gravity = android.view.Gravity.CENTER_VERTICAL
             setPadding(dp(6), dp(4), dp(6), dp(4))
             addView(navButton("ic_history", "历史记录") { showHistory() })
-            addView(navButton("ic_refresh", "刷新") { if (tabs.isNotEmpty()) web.reload() })
+            addView(navButton("ic_refresh", "刷新") { if (tabs.isNotEmpty()) reloadCurrent() })
             addView(navButton("ic_home", "主页") { goHome() })
             addView(
                 urlField,
@@ -681,6 +681,22 @@ class MainActivity : Activity() {
         toast("已加入下载列表")
     }
 
+    /** Address of the page whose load failed, kept so refresh can retry it. */
+    @Volatile
+    private var failedUrl: String? = null
+
+    /** Puts the failed address back in the bar after the error page replaced it. */
+    private fun showFailedUrl(url: String?) {
+        if (url == null || urlField.hasFocus()) return
+        urlField.setText(url)
+        tabs.getOrNull(active)?.url = url
+    }
+
+    /** Refresh reloads the page that failed, not the error page drawn over it. */
+    private fun reloadCurrent() {
+        val target = failedUrl
+        if (target != null) web.loadUrl(target) else web.reload()
+    }
     private fun toast(message: String) {
         android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show()
     }
@@ -1188,6 +1204,8 @@ class MainActivity : Activity() {
         const val DEFAULT_HOST = "127.0.0.1"
     }
 }
+
+
 
 
 
