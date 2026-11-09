@@ -66,7 +66,10 @@ object Downloads {
         // so a file:// or content:// target makes no sense here.
         val scheme = runCatching { java.net.URI(url).scheme?.lowercase() }.getOrNull()
         if (scheme != "http" && scheme != "https") return
-        val task = Task(url, fileName(url, disposition), mime ?: "application/octet-stream", userAgent)
+        // The name comes from the original link; only the transfer goes to the
+        // mirror, so the file on disk keeps the name the page offered.
+        val target = Xget.rewrite(context, url)
+        val task = Task(target, fileName(url, disposition), mime ?: "application/octet-stream", userAgent)
         tasks.add(0, task)
         changed()
         launch(context.applicationContext, task)

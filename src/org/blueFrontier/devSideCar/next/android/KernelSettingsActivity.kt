@@ -115,6 +115,7 @@ class KernelSettingsActivity : Activity() {
             text = "暂无下载任务"
         }
         downloadCard.addView(downloadStatus)
+        downloadCard.addView(switchRow("GitHub 下载走 Xget 加速", Xget.KEY, false) {})
         downloadCard.addView(Button(this).apply {
             text = "下载管理"
             setOnClickListener {
