@@ -126,7 +126,7 @@ jobs:
         id: kotlin-cache
         with:
           path: ${{ github.workspace }}/.toolchain
-          key: kotlin-${{ env.KOTLIN_VERSION }}-linux
+          key: kotlin-${{ env.KOTLIN_VERSION }}-${{ env.KOTLIN_SHA256 }}-linux
 
       - name: Download Kotlin compiler (cache miss)
         if: steps.kotlin-cache.outputs.cache-hit != 'true'
@@ -252,5 +252,6 @@ jobs:
           path: release/*
           if-no-files-found: error
           retention-days: 30
+
 
 
