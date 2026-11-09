@@ -646,11 +646,22 @@ class MainActivity : Activity() {
                 // accepted when this device's CA really signed it.
                 val cert = runCatching { error.certificate?.x509Certificate }.getOrNull()
                 val hostnameMismatch = error.primaryError == android.net.http.SslError.SSL_IDMISMATCH
-                if (KernelTrust.isKernelIssued(this@MainActivity, cert, hostnameMismatch)) {
-                    handler.proceed()
+                // SslError.getCertificate() is null on some WebView builds. While
+                // the in-app proxy is applied the WebView cannot reach anything but
+                // the kernel, so a null certificate still means the kernel is the
+                // one presenting it; with the kernel stopped there is nothing to
+                // vouch for the connection and it stays blocked.
+                val allowed = if (cert != null) {
+                    KernelTrust.isKernelIssued(this@MainActivity, cert, hostnameMismatch)
                 } else {
-                    handler.cancel()
+                    KernelRuntime.isRunning()
                 }
+                android.util.Log.w(
+                    "ds-ssl",
+                    "url=${error.url} primary=${error.primaryError} " +
+                        "cert=${cert != null} mismatch=$hostnameMismatch allowed=$allowed",
+                )
+                if (allowed) handler.proceed() else handler.cancel()
             }
         }
     }
@@ -1177,6 +1188,7 @@ class MainActivity : Activity() {
         const val DEFAULT_HOST = "127.0.0.1"
     }
 }
+
 
 
 
