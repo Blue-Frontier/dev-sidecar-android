@@ -16,6 +16,32 @@ IssueTracker: https://github.com/Blue-Frontier/dev-sidecar-android/issues
 Changelog: https://github.com/Blue-Frontier/dev-sidecar-android/releases
 
 AutoName: DS NEXT
+Summary: A browser that reaches sites blocked by network-level censorship
+Description: |
+  DS NEXT exists for one situation: a network where sites are blocked by
+  poisoning their names or by resetting the connection, and where the usual
+  fixes do not help.
+
+  Everything the browser loads goes through a proxy kernel that runs inside the
+  app. The kernel applies a ruleset published by the dev-sidecar project: name
+  resolution overrides, per-host connection rules and pre-set addresses, plus
+  encrypted DNS and TLS Encrypted Client Hello wherever the network allows it.
+  When a site is unreachable because its real address cannot be looked up, or
+  because its name gives it away, this tries a route that still works.
+
+  What it does not do:
+
+  * No VPN and no system-wide proxy. Only pages opened in DS NEXT go through the
+    kernel; other apps on the device are untouched.
+  * No account, no advertising, no analytics. The rule bundle is shipped inside
+    the app and works offline; fetching a newer one from the project's server is
+    optional.
+  * No certificate is installed system-wide. Connections the app makes are
+    signed by a certificate authority that is generated on the device and used
+    only inside this app.
+
+  The ruleset changes as networks change, so a fresh configuration matters: the
+  settings screen shows which version is active and can fetch a newer one.
 
 RepoType: git
 Repo: https://github.com/Blue-Frontier/dev-sidecar-android.git
