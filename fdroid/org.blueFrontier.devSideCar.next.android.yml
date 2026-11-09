@@ -2,8 +2,11 @@
 # https://gitlab.com/fdroid/fdroiddata/-/blob/master/metadata/ — it is kept here
 # so the build recipe and the build scripts change together.
 #
-# Status: draft, and one item is still open — see "Kotlin" below. Everything else
-# matches what .github/workflows/build.yml pins.
+# Everything below matches .github/workflows/build.yml: the same tool versions,
+# the same Kotlin archive (by SHA-256) and the same three scripts. F-Droid's
+# build VM has network access (its Gradle provisioning sets ten-minute HTTP
+# timeouts and fetches dependencies at build time), so the compiler is downloaded
+# in prebuild instead of being vendored in this repository.
 Categories:
   - Internet
 License: MPL-2.0
@@ -19,8 +22,9 @@ Repo: https://github.com/Blue-Frontier/dev-sidecar-android.git
 
 # Reproducible builds: F-Droid rebuilds the tag, copies our signature onto its
 # own build with apksigcopier, and publishes the developer-signed APK only if the
-# payloads match. The APK below is therefore the reference this recipe is checked
-# against — it must be published, not left as a draft.
+# payloads match. If the comparison fails the version is skipped silently, so a
+# green build is not proof of anything — the published APK and this recipe have
+# to be checked against each other.
 Binaries: https://github.com/Blue-Frontier/dev-sidecar-android/releases/download/v%v/DS-NEXT-%v-arm64.apk
 # Only this certificate may sign the binary above. Without it `fdroid update`
 # does not check who signed the APK it publishes under our name.
@@ -31,27 +35,30 @@ Builds:
     versionCode: 400
     commit: v0.4.0
     submodules: true
-    sudo:
-      - apt-get update
-      - apt-get install -y --no-install-recommends openjdk-21-jdk-headless unzip
-    # Everything the build needs is either in the checkout or in the image:
-    #   * aapt2 / zipalign / d8 / apksigner — build-tools 37.0.0 (pinned to match CI)
-    #   * android.jar                           — platform 35
-    #   * the Go modules                        — kernel/goproxy (file:// module proxy)
-    #   * androidx.webkit                       — deps/vendor/webkit-1.12.1.aar
-    #   * gomobile + gobind                     — installed from kernel/goproxy
-    # The one exception is the Kotlin compiler; see the note in MaintainerNotes.
+    # The image already carries default-jdk-headless (OpenJDK 21 on trixie),
+    # unzip and curl, so nothing is installed here on purpose.
     init: |
+      set -euo pipefail
       export ANDROID_JAR="$ANDROID_HOME/platforms/android-35/android.jar"
       export BUILD_TOOLS="$ANDROID_HOME/build-tools/37.0.0"
       export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865"
+    prebuild: |
+      set -euo pipefail
+      # Same archive, same checksum as CI: a different compiler emits different
+      # dex bytes, and the comparison would fail for the whole release.
+      curl --fail --location --silent --show-error --max-time 600 \
+        -o kotlin.zip \
+        https://github.com/JetBrains/kotlin/releases/download/v2.4.21/kotlin-compiler-2.4.21.zip
+      echo "7cc140e76daf416a0424a5557f99afd7ca89ebd463ea1101261e3e01c33e75cd  kotlin.zip" | sha256sum -c -
+      mkdir -p .toolchain
+      unzip -q kotlin.zip -d .toolchain
+      rm -f kotlin.zip
+      chmod +x .toolchain/kotlinc/bin/kotlinc
     build: |
       set -euo pipefail
       export ANDROID_JAR="$ANDROID_HOME/platforms/android-35/android.jar"
       export BUILD_TOOLS="$ANDROID_HOME/build-tools/37.0.0"
       export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865"
-      # Pinned to the compiler the release was built with; a different kotlinc
-      # emits different dex bytes and reproducibility is lost.
       export KOTLINC="$PWD/.toolchain/kotlinc/bin/kotlinc"
       export KOTLIN_STDLIB="$PWD/.toolchain/kotlinc/lib/kotlin-stdlib.jar"
       ./deps/fetch-deps.sh
@@ -64,15 +71,18 @@ Builds:
 
 MaintainerNotes: |
   No Gradle anywhere: build.sh, sync-kernel.sh and kernel/build-kernel-aar.sh are
-  plain bash and run on Debian unchanged. The same three scripts run in CI on
+  plain bash and run on Debian unchanged. CI runs the same three scripts on
   ubuntu-latest with the same pins (build-tools 37.0.0, NDK 29.0.14206865,
-  Kotlin 2.4.21, JDK 21), and the build job rebuilds twice and compares hashes so
+  Kotlin 2.4.21, Go 1.27.3, JDK 21) and rebuilds twice, comparing hashes, so
   nondeterminism is caught before a tag is cut.
 
-  Kotlin is the open item: the release is built with kotlin-compiler 2.4.21, and
-  Debian's kotlin package is older, so the compiler has to be vendored (an ~80 MB
-  zip unpacked into .toolchain/) for the rebuild to produce identical dex. Until
-  that is settled this recipe can build, but not reproducibly.
+  Offline dependencies come from the checkout: deps/vendor/webkit-1.12.1.aar and
+  kernel/goproxy (a file:// Go module proxy). The Kotlin archive is the only
+  download, pinned by SHA-256 above.
+
+  Known cross-platform difference: libgojni.so differs by a few dozen bytes
+  between a Windows and a Linux build (ELF section layout), which is why releases
+  are built on Linux only.
 
 AutoUpdateMode: Version v%v
 UpdateCheckMode: Tags ^v[0-9.]+$

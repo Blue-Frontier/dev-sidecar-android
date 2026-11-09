@@ -57,6 +57,7 @@ jobs:
     # kotlinc gets different dex and resource bytes.
     env:
       KOTLIN_VERSION: '2.4.21'
+      KOTLIN_SHA256: '7cc140e76daf416a0424a5557f99afd7ca89ebd463ea1101261e3e01c33e75cd'
       BUILD_TOOLS_VERSION: '37.0.0'
       NDK_VERSION: '29.0.14206865'
       ANDROID_PLATFORM: '35'
@@ -135,6 +136,10 @@ jobs:
           url="https://github.com/JetBrains/kotlin/releases/download/v$KOTLIN_VERSION/kotlin-compiler-$KOTLIN_VERSION.zip"
           mkdir -p .toolchain
           curl --fail --location --silent --show-error -o kotlin.zip "$url"
+          # The F-Droid recipe downloads the same archive with the same checksum;
+          # a different compiler would emit different dex and break the rebuild
+          # comparison the whole release depends on.
+          echo "$KOTLIN_SHA256  kotlin.zip" | sha256sum -c -
           unzip -q kotlin.zip -d .toolchain
           rm -f kotlin.zip
 
@@ -247,4 +252,5 @@ jobs:
           path: release/*
           if-no-files-found: error
           retention-days: 30
+
 
