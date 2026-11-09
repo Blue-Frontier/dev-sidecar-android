@@ -586,15 +586,19 @@ class MainActivity : Activity() {
         }
         view.webViewClient = object : android.webkit.WebViewClient() {
             override fun doUpdateVisitedHistory(wv: WebView, url: String, isReload: Boolean) {
+                // The error page is a data URL, so the tab would otherwise take
+                // about:blank as its address and refresh would reload the error.
+                val shown = if (failedUrl != null && url.startsWith("about:")) failedUrl!! else url
                 tabs.getOrNull(active)?.let {
-                    it.url = url
+                    it.url = shown
                     it.loaded = true
-                    record(it, url)
+                    if (shown == url) record(it, url)
                 }
-                if (!urlField.hasFocus()) urlField.setText(url)
+                if (!urlField.hasFocus()) urlField.setText(shown)
             }
 
             override fun onPageStarted(wv: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                if (url.startsWith("http")) failedUrl = null
                 progress.visibility = android.view.View.VISIBLE
             }
 
@@ -615,7 +619,9 @@ class MainActivity : Activity() {
                     <p>${error.description}（${error.errorCode}）</p>
                     <p>可以检查网络，或到设置里确认内核正在运行。</p></body></html>
                 """.trimIndent()
+                failedUrl = request.url.toString()
                 wv.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+                showFailedUrl(failedUrl)
             }
 
             override fun onReceivedHttpError(
@@ -633,7 +639,9 @@ class MainActivity : Activity() {
                     <p>内核返回 HTTP ${error.statusCode}${error.reasonPhrase?.let { "（$it）" } ?: ""}</p>
                     <p>如果这是被墙的站点，换个网络或稍后重试；也可以到设置里确认内核在运行。</p></body></html>
                 """.trimIndent()
+                failedUrl = request.url.toString()
                 wv.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+                showFailedUrl(failedUrl)
             }
 
             override fun onReceivedSslError(
