@@ -17,8 +17,8 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      debuggable:
-        description: Mark the APK debuggable (run-as, attach a debugger)
+      debug:
+        description: Build the side-by-side debug flavour (own package, label and icon)
         type: boolean
         required: false
         default: false
@@ -186,7 +186,9 @@ jobs:
             exit 1
           fi
           echo "name=$manifest" >>"$GITHUB_OUTPUT"
-          echo "artifact=DS-NEXT-$manifest-$MATRIX_ABI" >>"$GITHUB_OUTPUT"
+          suffix=""
+          if [ "${{ inputs.debug }}" = "true" ]; then suffix="-debug"; fi
+          echo "artifact=DS-NEXT-$manifest-$MATRIX_ABI$suffix" >>"$GITHUB_OUTPUT"
           echo "versionName=$manifest versionCode=$code"
 
       - name: Fetch the plain-jar dependencies
@@ -224,7 +226,7 @@ jobs:
           # other triggers sign with a cached development key so the artifact
           # stays installable for testers.
           flags=""
-          if [ "${{ inputs.debuggable }}" = "true" ]; then flags="$flags --debuggable"; fi
+          if [ "${{ inputs.debug }}" = "true" ]; then flags="$flags --debug --debuggable"; fi
           if [ "${{ inputs.unsigned }}" = "true" ]; then
             ./build.sh --unsigned $flags
           else

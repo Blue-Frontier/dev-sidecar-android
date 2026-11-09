@@ -11,10 +11,14 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 DEBUGGABLE=0
+DEBUG_VARIANT=0
 UNSIGNED=0
 for arg in "$@"; do
     case "$arg" in
         --debuggable) DEBUGGABLE=1 ;;
+        # A side-by-side build: its own applicationId, label and icon, so it
+        # installs next to the release app instead of fighting its signature.
+        --debug) DEBUG_VARIANT=1 ;;
         # CI splits signing into its own job (and environment approval), so the
         # matrix build produces unsigned APKs for that job to sign.
         --unsigned) UNSIGNED=1 ;;
@@ -146,16 +150,35 @@ VERSION_NAME=$(sed -n 's/.*android:versionName="\([^"]*\)".*/\1/p' "$ROOT/Androi
 VERSION_NAME=${VERSION_NAME:-0.0.0}
 VERSION_CODE=$(version_code "$VERSION_NAME")
 
+MANIFEST="$ROOT/AndroidManifest.xml"
+RES_DIRS=("$ROOT/res")
+if ((DEBUG_VARIANT)); then
+    MANIFEST="$OUT/AndroidManifest-debug.xml"
+    sed -e 's/package="org\.blueFrontier\.devSideCar\.next\.android"/package="org.blueFrontier.devSideCar.next.android.debug"/' \
+        -e 's/android:label="DS NEXT"/android:label="DS NEXT Debug"/' \
+        -e 's|android:icon="@mipmap/ic_launcher"|android:icon="@drawable/ic_launcher_debug"|' \
+        -e 's|android:roundIcon="@mipmap/ic_launcher"|android:roundIcon="@drawable/ic_launcher_debug"|' \
+        -e 's|android:authorities="org\.blueFrontier\.devSideCar\.next\.android|android:authorities="org.blueFrontier.devSideCar.next.android.debug|' \
+        -e 's|android:name="\.|android:name="org.blueFrontier.devSideCar.next.android.|g' \
+        "$ROOT/AndroidManifest.xml" >"$MANIFEST"
+    RES_DIRS+=("$ROOT/res-debug")
+fi
+
 # 1) aapt2: compile res, then link manifest + assets + those compiled resources.
-"$AAPT2" compile --dir "$(native "$ROOT/res")" -o "$(native "$OUT/res.zip")"
+RES_ZIPS=()
+for res_dir in "${RES_DIRS[@]}"; do
+    res_zip="$OUT/res-$(basename "$res_dir").zip"
+    "$AAPT2" compile --dir "$(native "$res_dir")" -o "$(native "$res_zip")"
+    RES_ZIPS+=("$(native "$res_zip")")
+done
 LINK_ARGS=(link
     -I "$(native "$ANDROID_JAR")"
-    --manifest "$(native "$ROOT/AndroidManifest.xml")"
+    --manifest "$(native "$MANIFEST")"
     --version-code "$VERSION_CODE"
     --version-name "$VERSION_NAME"
     -A "$(native "$ROOT/assets")"
     -o "$(native "$OUT/base.apk")"
-    "$(native "$OUT/res.zip")")
+    "${RES_ZIPS[@]}")
 # aapt2 treats an empty argument as an input file, so the switch is only added
 # when it is actually requested.
 if ((DEBUGGABLE)); then LINK_ARGS+=(--debug-mode); fi

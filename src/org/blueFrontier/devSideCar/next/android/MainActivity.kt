@@ -920,7 +920,7 @@ class MainActivity : Activity() {
     private fun kernelAddr(): InetSocketAddress? {
         val listen = if (KernelRuntime.isRunning()) KernelRuntime.listenAddr() else KernelRuntime.savedListen(this)
         val host = listen.substringBeforeLast(':').ifEmpty { DEFAULT_HOST }
-        val port = listen.substringAfterLast(':').toIntOrNull() ?: DEFAULT_PORT
+        val port = listen.substringAfterLast(':').toIntOrNull() ?: KernelRuntime.defaultPort(this)
         if (port !in 1..65535) return null
         return InetSocketAddress(host, port)
     }

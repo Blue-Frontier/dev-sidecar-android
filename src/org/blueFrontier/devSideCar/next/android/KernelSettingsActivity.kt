@@ -345,7 +345,7 @@ class KernelSettingsActivity : Activity() {
         val portRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         portField = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_NUMBER
-            setText(prefs.getInt("port", KernelRuntime.DEFAULT_PORT).toString())
+            setText(prefs.getInt("port", KernelRuntime.defaultPort(this@KernelSettingsActivity)).toString())
             setTextColor(TEXT)
             textSize = 15f
         }
@@ -487,7 +487,7 @@ class KernelSettingsActivity : Activity() {
         statusDetail.text = "已保存 $port，点「重启」生效"
     }
 
-    private fun listenAddr(): String = "127.0.0.1:" + prefs.getInt("port", KernelRuntime.DEFAULT_PORT)
+    private fun listenAddr(): String = "127.0.0.1:" + prefs.getInt("port", KernelRuntime.defaultPort(this))
 
     private fun checkUpdate() {
         val url = runCatching {

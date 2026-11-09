@@ -105,11 +105,30 @@ adb install -r build/dscore.apk # 覆盖安装，数据保留
 **二、CI 出调试包（不动标签）**
 
 ```bash
-gh workflow run Build --ref main -f debuggable=true
-gh run download <run-id> -n DS-NEXT-<版本>-arm64
+gh workflow run Build --ref main -f debug=true
+gh run download <run-id> -n DS-NEXT-<版本>-arm64-debug
 ```
 
-产物是 workflow artifact，30 天过期，**不产生 release、不需要审批**。签名用的是 CI 缓存下来的开发密钥（`dscore-debug-keystore`），所以连续几次构建之间可以互相覆盖安装——但**装不到发布包上面**，第一次从发布版切到调试版要卸载一次，数据会丢。
+`-f debug=true` 构建的是一个**独立的调试变体**，不是给发布包换个签名：
+
+| 项 | 发布版 | 调试变体 |
+| --- | --- | --- |
+| 包名 | `…next.android` | `…next.android.debug` |
+| 名称 | DS NEXT | DS NEXT Debug |
+| 图标 | 原图标 | 红底白叹号 |
+| 内核端口 | 31191 | 31192 |
+
+包名不同意味着**可以和发布版并存**：不用卸载、不会丢数据、两个都能同时跑。端口分开是为了两边同时运行时不去抢同一个监听。
+
+产物是 workflow artifact，30 天过期，**不产生 release、不需要审批**。签名用 CI 缓存下来的开发密钥（`dscore-debug-keystore`），所以连续几次构建之间可以互相覆盖安装。
+
+清单里的组件名在打包时被展开成代码包名（等效 Gradle 的 namespace），所以自动化启动要用完整类名：
+
+```bash
+adb shell am start -n org.blueFrontier.devSideCar.next.android.debug/org.blueFrontier.devSideCar.next.android.MainActivity
+```
+
+手动点图标不受影响。
 
 两条路的取舍：用发布密钥要在本机保存密钥（它本来就在你手里，只是多了一个副本）；用调试包不用碰密钥，但会和发布版互斥。日常改一版装一版走第一条。
 

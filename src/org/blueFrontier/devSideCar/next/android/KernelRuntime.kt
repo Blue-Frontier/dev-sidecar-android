@@ -53,7 +53,15 @@ object KernelRuntime {
 
     fun listenAddr(): String = listen
 
-    fun savedPort(ctx: Context): Int = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt("port", DEFAULT_PORT)
+    /**
+     * The debug flavour is a separate package and can run next to the release
+     * app, so it must not fight it for the same port.
+     */
+    fun defaultPort(ctx: Context): Int =
+        if (ctx.packageName.endsWith(".debug")) DEFAULT_PORT + 1 else DEFAULT_PORT
+
+    fun savedPort(ctx: Context): Int =
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt("port", defaultPort(ctx))
 
     fun savedListen(ctx: Context): String = "127.0.0.1:${savedPort(ctx)}"
 
