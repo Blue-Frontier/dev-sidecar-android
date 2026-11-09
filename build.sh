@@ -238,6 +238,9 @@ if [[ -n "${DS_KEYSTORE_B64:-}" ]]; then
     KS="$OUT/release.keystore"
     printf '%s' "$DS_KEYSTORE_B64" | base64 -d >"$KS"
     [[ -n "${DS_KEYSTORE_PASS:-}" ]] && KS_PASS=$DS_KEYSTORE_PASS
+    # PKCS12 keeps a single password for the store and its key; keytool ignores
+    # -keypass there. DS_KEY_PASS only matters for JKS-style keystores and
+    # defaults to the store password, which is what a PKCS12 key needs.
     KEY_PASS=${DS_KEY_PASS:-$KS_PASS}
     [[ -n "${DS_KEY_ALIAS:-}" ]] && ALIAS=$DS_KEY_ALIAS
     echo "signing with the keystore from DS_KEYSTORE_B64 (alias $ALIAS)"
@@ -256,6 +259,8 @@ fi
     "--ks-pass=pass:$KS_PASS" "--key-pass=pass:$KEY_PASS" \
     --out "$(native "$OUT/dscore.apk")" "$(native "$OUT/aligned.apk")"
 "$JAVA" -jar "$(native "$APKSIGNER_JAR")" verify "$(native "$OUT/dscore.apk")" >/dev/null
+# The decoded release keystore must not linger in build/.
+if [[ -n "${DS_KEYSTORE_B64:-}" ]]; then rm -f "$KS"; fi
 echo "[6/7] zipalign OK"
 echo "[7/7] signed -> $OUT/dscore.apk"
 
