@@ -226,7 +226,9 @@ for so in "${ABI_LIBS[@]}"; do
     abi=$(basename "$(dirname "$so")")
     JAR_ARGS+=(-C "$(native "$OUT/stage")" "lib/$abi/libgojni.so")
 done
-"$JAR" "${JAR_ARGS[@]}"
+# The JVM on Windows ignores TZ and writes zip timestamps in the system zone,
+# which made a Windows build differ from a Linux one by eight hours.
+JAVA_TOOL_OPTIONS=-Duser.timezone=UTC "$JAR" "${JAR_ARGS[@]}"
 echo "[5/7] dex + .so merged"
 
 # 6) zipalign + 7) sign.
