@@ -219,20 +219,6 @@ jobs:
           path: ~/.ds-next/debug.keystore
           key: dscore-debug-keystore
 
-      - name: Build the APK
-        shell: bash
-        run: |
-          # Release builds hand the APK to the signing job in release.yml; the
-          # other triggers sign with a cached development key so the artifact
-          # stays installable for testers.
-          flags=""
-          if [ "${{ inputs.debug }}" = "true" ]; then flags="$flags --debug --debuggable"; fi
-          if [ "${{ inputs.unsigned }}" = "true" ]; then
-            ./build.sh --unsigned $flags
-          else
-            ./build.sh $flags
-          fi
-
       # The gate that keeps reproducible builds reproducible: same commit, same
       # toolchain, twice. F-Droid compares its own rebuild against our unsigned
       # payload, so nondeterminism here would silently break every release.
@@ -251,18 +237,30 @@ jobs:
             echo "the same source produced two different APKs; a rebuild would not match this release" >&2
             exit 1
           fi
-          # This gate builds the unsigned variant. Leaving it behind would make
-          # the collect step below pick it over the signed APK this job actually
-          # produced — and an unsigned APK is not installable.
-          if [ "${{ inputs.unsigned }}" != "true" ]; then rm -f build/dscore-unsigned.apk; fi
+      - name: Build the APK
+        shell: bash
+        run: |
+          # Release builds hand the APK to the signing job in release.yml; the
+          # other triggers sign with a cached development key so the artifact
+          # stays installable for testers.
+          flags=""
+          if [ "${{ inputs.debug }}" = "true" ]; then flags="$flags --debug --debuggable"; fi
+          if [ "${{ inputs.unsigned }}" = "true" ]; then
+            ./build.sh --unsigned $flags
+          else
+            ./build.sh $flags
+          fi
+
 
       - name: Collect the release files
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p release
+          # Prefer the signed APK: an unsigned one only exists when the job is
+          # the unsigned half of a release and asked for exactly that.
           src=build/dscore.apk
-          if [ -f build/dscore-unsigned.apk ]; then src=build/dscore-unsigned.apk; fi
+          if [ ! -f "$src" ]; then src=build/dscore-unsigned.apk; fi
           cp "$src" "release/${{ steps.version.outputs.artifact }}.apk"
           sha256sum "release/${{ steps.version.outputs.artifact }}.apk" \
             | sed "s| .*|  ${{ steps.version.outputs.artifact }}.apk|" \
