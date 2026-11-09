@@ -104,7 +104,9 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.27'
+          # The exact patch matters: Go embeds its version in libgojni.so, so a rebuild
+          # with 1.27.4 would not match a release built with 1.27.3.
+          go-version: '1.27.3'
           cache-dependency-path: kernel/go.sum
 
       - name: Install gomobile
@@ -245,3 +247,4 @@ jobs:
           path: release/*
           if-no-files-found: error
           retention-days: 30
+
