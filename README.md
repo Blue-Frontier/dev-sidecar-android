@@ -143,5 +143,23 @@ dist/                         归档的签名 APK
 
 - `androidx.webkit` — `ProxyController`，把内置浏览器的流量交给内核。
 - 启动时的开发者验证提示逐字取自 [FreeDroidWarn](https://github.com/woheller69/FreeDroidWarn)（Apache-2.0），内联在 `DeprecationNotice.kt` 里。原库是三个字符串加一个对话框，而它不附带 `R` 类，无 Gradle 的构建得为此生成资源表和 `R`——为一段文案不值得，所以留了这段等价实现。
+## 可重现构建
 
+同一份源码在同一套工具链下必须产出同一个 APK——F-Droid 会重编每个 tag，把开发者的签名用 `apksigcopier` 挪到自己的构建上，逐字节比对通过后才发布这一份。
 
+已经钉住的变量：
+
+| 变量 | 做法 |
+| --- | --- |
+| zip 条目时间戳 | `build.sh` 把 dex / `.so` 的 mtime 固定到 1980-01-01 |
+| JVM 时区 | `jar` 带 `-Duser.timezone=UTC`（Windows 上 JVM 不认 `TZ`） |
+| 换行 | `.gitattributes` 全局 `eol=lf`，否则 `assets/` 里的文件随 checkout 变 |
+| 签名 | `--unsigned` 构建；v1 签名关闭，时间戳不再进 META-INF |
+| Go 路径 | `-trimpath -buildvcs=false`，否则 `.so` 里嵌入 checkout 目录和模块缓存 |
+| Go 调试信息 | `-ldflags="-s -w"`，否则 DWARF 里带着 NDK 的绝对路径 |
+| 工具链 | build-tools 37.0.0、Kotlin 2.4.21、NDK 29.0.14206865、Go 1.27.3、JDK 21 |
+| 依赖 | `deps/vendor/` 的 AAR + `kernel/goproxy` 的模块代理，构建不需要网络 |
+
+CI 里有一道门禁：同一个提交连编两次，两次的 `dscore-unsigned.apk` 哈希必须相同，否则失败。
+
+已知边界：Windows 和 Linux 产出的 `lib/arm64-v8a/libgojni.so` 会有几十字节差异（ELF 节表布局随 C 工具链变化）。这不影响 F-Droid——它和我们一样在 Linux 上构建；本地 Windows 构建只用于开发验证。
