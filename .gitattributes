@@ -1,0 +1,12 @@
+# Line endings must be identical everywhere: they are part of the bytes that end
+# up inside assets/, and F-Droid rebuilds on Linux compare those bytes with the
+# release APK. Without this, a Windows checkout with core.autocrlf=true produces
+# a different APK from the same commit.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jar binary
+*.aar binary
+*.so binary
+*.apk binary
+*.keystore binary
