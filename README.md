@@ -71,14 +71,47 @@ git submodule update --init --recursive
 
 发版流程：
 
-```powershell
+```bash
 git tag v0.2.0
 git push origin v0.2.0
 ```
 
-草稿会在 Actions 跑完后出现在 Releases 里，确认 APK 可用后再手动发布。版本号从标签写入 `versionName`，`versionCode` 取 Actions 的运行序号，所以同一标签重复构建也不会撞版本。
+标签必须和 `AndroidManifest.xml` 里的 `versionName` / `versionCode` 一致，CI 会校验，不一致直接失败——不会悄悄改写。跑完后出现的是 **release 草稿**，签名在受保护的 `release` 环境中完成，发布与否由人决定，工作流不会自动发布。
 
 工具链版本固定在 `build.yml` 顶部（Kotlin / build-tools / NDK / Go）。本机与 CI 用同一套脚本，差别只在环境变量由谁提供。
+
+## 调试版
+
+改一版、装一版的时候不要走标签：打标签就会进受保护环境等审批，一轮几分钟。两条更快的路。
+
+**一、本机用发布密钥构建（推荐）**
+
+把发布密钥放在仓库外，构建出来的 APK 和线上同签名，可以直接覆盖安装，书签和 Cookie 都在：
+
+```bash
+# 一次性，放在仓库外，永远不要进 git
+cp <你的发布密钥> ~/.ds-next/release.keystore
+
+export DS_KEYSTORE="$HOME/.ds-next/release.keystore"
+export DS_KEYSTORE_PASS='<store 密码>'
+export DS_KEY_ALIAS='<别名>'
+
+./build.sh                      # 与线上同签名
+adb install -r build/dscore.apk # 覆盖安装，数据保留
+```
+
+不加 `--debuggable` 时，构建产物和发布包走同一条路径，行为一致；要 `run-as` 抓应用私有文件时再加 `--debuggable`（那时的签名仍是发布密钥，只是 manifest 里标了 debuggable）。
+
+**二、CI 出调试包（不动标签）**
+
+```bash
+gh workflow run Build --ref main -f debuggable=true
+gh run download <run-id> -n DS-NEXT-<版本>-arm64
+```
+
+产物是 workflow artifact，30 天过期，**不产生 release、不需要审批**。签名用的是 CI 缓存下来的开发密钥（`dscore-debug-keystore`），所以连续几次构建之间可以互相覆盖安装——但**装不到发布包上面**，第一次从发布版切到调试版要卸载一次，数据会丢。
+
+两条路的取舍：用发布密钥要在本机保存密钥（它本来就在你手里，只是多了一个副本）；用调试包不用碰密钥，但会和发布版互斥。日常改一版装一版走第一条。
 
 ## 目录
 

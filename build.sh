@@ -252,13 +252,19 @@ ALIAS=dscore-debug
 if [[ -n "${DS_KEYSTORE_B64:-}" ]]; then
     KS="$OUT/release.keystore"
     printf '%s' "$DS_KEYSTORE_B64" | base64 -d >"$KS"
+elif [[ -n "${DS_KEYSTORE:-}" ]]; then
+    # Local builds use the release key from a file outside the checkout, so the
+    # APK upgrades the installed release instead of needing an uninstall.
+    KS="$DS_KEYSTORE"
+fi
+if [[ -n "${DS_KEYSTORE_B64:-}" || -n "${DS_KEYSTORE:-}" ]]; then
     [[ -n "${DS_KEYSTORE_PASS:-}" ]] && KS_PASS=$DS_KEYSTORE_PASS
     # PKCS12 keeps a single password for the store and its key; keytool ignores
     # -keypass there. DS_KEY_PASS only matters for JKS-style keystores and
     # defaults to the store password, which is what a PKCS12 key needs.
     KEY_PASS=${DS_KEY_PASS:-$KS_PASS}
     [[ -n "${DS_KEY_ALIAS:-}" ]] && ALIAS=$DS_KEY_ALIAS
-    echo "signing with the keystore from DS_KEYSTORE_B64 (alias $ALIAS)"
+    echo "signing with ${KS##*/} (alias $ALIAS)"
 elif [[ ! -f "$KS" ]]; then
     "$JAVA_HOME/bin/keytool" -genkeypair -v -keystore "$(native "$KS")" \
         -storepass "$KS_PASS" -keypass "$KEY_PASS" -alias "$ALIAS" \

@@ -16,6 +16,12 @@ on:
       - 'dist/**'
   pull_request:
   workflow_dispatch:
+    inputs:
+      debuggable:
+        description: Mark the APK debuggable (run-as, attach a debugger)
+        type: boolean
+        required: false
+        default: false
   workflow_call:
     inputs:
       version:
@@ -201,16 +207,28 @@ jobs:
         run: |
           ./sync-kernel.sh
 
+      # Without this every run mints a fresh development key, so each artifact
+      # would refuse to install over the previous one. A cached key keeps the
+      # signature stable across pushes, which is what makes a debug artifact
+      # useful for testing.
+      - name: Restore the development keystore
+        uses: actions/cache@v4
+        with:
+          path: ~/.ds-next/debug.keystore
+          key: dscore-debug-keystore
+
       - name: Build the APK
         shell: bash
         run: |
           # Release builds hand the APK to the signing job in release.yml; the
-          # other triggers sign with a throwaway local key so the artifact stays
-          # installable for testers.
+          # other triggers sign with a cached development key so the artifact
+          # stays installable for testers.
+          flags=""
+          if [ "${{ inputs.debuggable }}" = "true" ]; then flags="$flags --debuggable"; fi
           if [ "${{ inputs.unsigned }}" = "true" ]; then
-            ./build.sh --unsigned
+            ./build.sh --unsigned $flags
           else
-            ./build.sh
+            ./build.sh $flags
           fi
 
       # The gate that keeps reproducible builds reproducible: same commit, same
