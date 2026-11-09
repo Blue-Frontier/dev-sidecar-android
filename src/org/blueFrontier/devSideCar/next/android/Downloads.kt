@@ -112,6 +112,15 @@ object Downloads {
                 if (offset > 0) conn.setRequestProperty("Range", "bytes=$offset-")
                 conn.connectTimeout = 20_000
                 conn.readTimeout = 60_000
+                if (conn is javax.net.ssl.HttpsURLConnection) {
+                    // The request goes through the kernel's CONNECT proxy, so the
+                    // certificate it sees is the one the kernel minted on this
+                    // device. The default factory only knows the system store and
+                    // would reject it with "trust anchor not found".
+                    val (factory, verifier) = KernelTrust.setup(context)
+                    conn.sslSocketFactory = factory
+                    conn.hostnameVerifier = verifier
+                }
 
                 val code = conn.responseCode
                 if (code !in 200..299) throw IllegalStateException("HTTP $code")
@@ -232,5 +241,6 @@ object Downloads {
             .take(120)
     }
 }
+
 
 
