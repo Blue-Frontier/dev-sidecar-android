@@ -251,6 +251,10 @@ jobs:
             echo "the same source produced two different APKs; a rebuild would not match this release" >&2
             exit 1
           fi
+          # This gate builds the unsigned variant. Leaving it behind would make
+          # the collect step below pick it over the signed APK this job actually
+          # produced — and an unsigned APK is not installable.
+          if [ "${{ inputs.unsigned }}" != "true" ]; then rm -f build/dscore-unsigned.apk; fi
 
       - name: Collect the release files
         shell: bash
