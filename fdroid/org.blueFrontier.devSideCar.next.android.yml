@@ -57,9 +57,9 @@ Binaries: https://github.com/Blue-Frontier/dev-sidecar-android/releases/download
 AllowedAPKSigningKeys: 13e142299f4e42ebca1d034a339e3b789ee379a618abcf186c9b49431bcb6108
 
 Builds:
-  - versionName: 0.5.0
-    versionCode: 500
-    commit: v0.5.0
+  - versionName: 0.6.0
+    versionCode: 600
+    commit: v0.6.0
     submodules: true
     # The image already carries default-jdk-headless (OpenJDK 21 on trixie),
     # unzip and curl, so nothing is installed here on purpose.
@@ -112,6 +112,7 @@ MaintainerNotes: |
 
 AutoUpdateMode: Version v%v
 UpdateCheckMode: Tags ^v[0-9.]+$
-CurrentVersion: 0.5.0
-CurrentVersionCode: 500
+CurrentVersion: 0.6.0
+CurrentVersionCode: 600
+
 
