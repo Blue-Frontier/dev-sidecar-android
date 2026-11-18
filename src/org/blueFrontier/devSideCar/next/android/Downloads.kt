@@ -240,6 +240,35 @@ object Downloads {
      */
     internal fun openMime(task: Task): String = mimeType(task.name, task.mime)
 
+    /**
+     * The type implied by a URL's file name, for a URL that is about to be
+     * handed to the downloader rather than loaded as a page.
+     */
+    fun mimeForUrl(url: String): String = mimeType(nameOf(url), null)
+
+    /**
+     * Whether a URL names something a WebView cannot display.
+     *
+     * The WebView decides on its own only when the server says
+     * `Content-Disposition: attachment`; a plain link to a PDF is loaded and
+     * rendered as a blank page instead, because the type looks renderable to it.
+     * These extensions are the ones where that guess is wrong, so the browser
+     * takes the decision away from it.
+     */
+    fun isAttachmentUrl(url: String): Boolean {
+        val name = nameOf(url).substringAfterLast('.', "").lowercase()
+        return name in setOf(
+            "pdf", "zip", "apk", "apks", "xapk", "apkm", "7z", "rar", "tar", "gz", "tgz",
+            "dmg", "exe", "msi", "iso", "jar", "bin",
+            "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp",
+            "epub", "mobi", "azw3", "torrent",
+        )
+    }
+
+    /** The last path segment of a URL, without the query or fragment. */
+    private fun nameOf(url: String): String =
+        url.substringBefore('#').substringBefore('?').substringAfterLast('/')
+
     // Android will not offer the package installer for a file that is not
     // declared as an APK, and plenty of servers send octet-stream for one. The
     // extension is the only evidence left at that point, so it beats a generic

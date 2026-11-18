@@ -585,6 +585,26 @@ class MainActivity : Activity() {
             }
         }
         view.webViewClient = object : android.webkit.WebViewClient() {
+            override fun shouldOverrideUrlLoading(
+                wv: WebView,
+                request: android.webkit.WebResourceRequest,
+            ): Boolean {
+                // A link to a document or archive is a download, not a page. The
+                // WebView only works that out for responses marked as
+                // attachments; for a plain PDF link it renders nothing at all.
+                val url = request.url.toString()
+                if (!request.isForMainFrame || !Downloads.isAttachmentUrl(url)) return false
+                download(url, wv.settings.userAgentString, null, Downloads.mimeForUrl(url))
+                return true
+            }
+
+            @Suppress("DEPRECATION")
+            override fun shouldOverrideUrlLoading(wv: WebView, url: String): Boolean {
+                if (!Downloads.isAttachmentUrl(url)) return false
+                download(url, wv.settings.userAgentString, null, Downloads.mimeForUrl(url))
+                return true
+            }
+
             override fun doUpdateVisitedHistory(wv: WebView, url: String, isReload: Boolean) {
                 // The error page is a data URL, so the tab would otherwise take
                 // about:blank as its address and refresh would reload the error.
@@ -962,6 +982,13 @@ class MainActivity : Activity() {
         } else {
             searchUrl(raw)
         }
+        // A document or archive belongs in the download list, not in the page
+        // view: loadUrl() skips shouldOverrideUrlLoading entirely, so the
+        // decision has to be made here as well.
+        if (Downloads.isAttachmentUrl(target)) {
+            download(target, web.settings.userAgentString, null, Downloads.mimeForUrl(target))
+            return
+        }
         if (tabs.isEmpty()) newTab(target) else web.loadUrl(target)
     }
 
@@ -1123,6 +1150,10 @@ class MainActivity : Activity() {
 
     private fun openUrl(url: String) {
         failedUrl = null
+        if (Downloads.isAttachmentUrl(url)) {
+            download(url, web.settings.userAgentString, null, Downloads.mimeForUrl(url))
+            return
+        }
         if (tabs.isEmpty()) newTab(url) else {
             tabs[active].url = url
             tabs[active].loaded = true
