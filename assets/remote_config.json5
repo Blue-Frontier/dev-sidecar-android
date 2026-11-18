@@ -21,6 +21,10 @@
     },
   },
   server: {
+    setting: {
+      // 可选：把请求的上游改成 HTTP/3。默认关闭，只对列出的域名生效。
+      quicUpstream: { enabled: true, hosts: ["x.com", "*.x.com", "twitter.com"] },
+    },
     intercepts: {
       // GitHub
       "github.com": {
