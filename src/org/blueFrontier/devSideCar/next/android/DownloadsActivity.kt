@@ -168,14 +168,20 @@ class DownloadsActivity : Activity() {
             Downloads.State.PAUSED, Downloads.State.FAILED ->
                 actions.addView(action("继续") { Downloads.resume(this, task) })
             Downloads.State.DONE -> actions.addView(action("打开") {
+                val uri = task.uri
+                if (uri == null) {
+                    android.widget.Toast.makeText(this, "文件还没有写入完成", android.widget.Toast.LENGTH_SHORT).show()
+                    return@action
+                }
                 runCatching {
-                    task.uri?.let {
-                        startActivity(
-                            android.content.Intent(android.content.Intent.ACTION_VIEW)
-                                .setDataAndType(it, task.mime)
-                                .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION),
-                        )
-                    }
+                    startActivity(
+                        android.content.Intent(android.content.Intent.ACTION_VIEW)
+                            .setDataAndType(uri, Downloads.openMime(task))
+                            .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                    )
+                }.onFailure {
+                    // Swallowing this was why an APK looked like it did nothing.
+                    android.widget.Toast.makeText(this, "没有应用可以打开这个文件", android.widget.Toast.LENGTH_SHORT).show()
                 }
             })
         }

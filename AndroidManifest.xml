@@ -14,6 +14,23 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Opening a downloaded APK is a normal thing to do in a browser, and
+         without this the system installer refuses to start on Android 8+. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!-- Android 11+ hides other apps unless they are declared here: without the
+         APK intent the installer is not among the "open with" candidates, and
+         the generic entry keeps every other mime type resolvable. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="application/vnd.android.package-archive" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="*/*" />
+        </intent>
+    </queries>
 
     <!-- usesCleartextTraffic: the CONNECT to the HTTP proxy is plain text. -->
     <application

@@ -69,7 +69,8 @@ object Downloads {
         // The name comes from the original link; only the transfer goes to the
         // mirror, so the file on disk keeps the name the page offered.
         val target = Xget.rewrite(context, url)
-        val task = Task(target, fileName(url, disposition), mime ?: "application/octet-stream", userAgent)
+        val name = fileName(url, disposition)
+        val task = Task(target, name, mimeType(name, mime), userAgent)
         tasks.add(0, task)
         changed()
         launch(context.applicationContext, task)
@@ -229,6 +230,37 @@ object Downloads {
             .setAutoCancel(true)
             .build()
         runCatching { manager.notify(task.name.hashCode(), notification) }
+    }
+
+    /**
+     * The type to hand to ACTION_VIEW for [task].
+     *
+     * Tasks created before the server's content type was corrected still carry
+     * the generic value, so the decision is made again here from the file name.
+     */
+    internal fun openMime(task: Task): String = mimeType(task.name, task.mime)
+
+    // Android will not offer the package installer for a file that is not
+    // declared as an APK, and plenty of servers send octet-stream for one. The
+    // extension is the only evidence left at that point, so it beats a generic
+    // content type.
+    private fun mimeType(name: String, declared: String?): String {
+        val generic = declared == null ||
+            declared == "application/octet-stream" ||
+            declared.startsWith("binary/")
+        if (!generic) return declared!!
+        return when (name.substringAfterLast('.', "").lowercase()) {
+            "apk", "apks", "xapk", "apkm" -> "application/vnd.android.package-archive"
+            "pdf" -> "application/pdf"
+            "zip" -> "application/zip"
+            "txt", "md", "log", "json" -> "text/plain"
+            "jpg", "jpeg" -> "image/jpeg"
+            "png" -> "image/png"
+            "gif" -> "image/gif"
+            "mp4" -> "video/mp4"
+            "mp3" -> "audio/mpeg"
+            else -> declared ?: "application/octet-stream"
+        }
     }
 
     private fun fileName(url: String, disposition: String?): String {
