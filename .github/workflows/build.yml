@@ -199,6 +199,9 @@ jobs:
           ./deps/fetch-deps.sh
 
       - name: Build the kernel AAR
+        env:
+          # CI has a network; the file proxy is the fast path, not a hard limit.
+          DS_ALLOW_NET: '1'
         working-directory: kernel
         shell: bash
         run: |
